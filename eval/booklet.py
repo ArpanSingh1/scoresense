@@ -54,6 +54,7 @@ class Question:
     number: str           # "13", "34.1", or "?" when it couldn't be read
     crops: list[Crop] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    unsure: bool = False  # its number was read without confidence
 
 
 def load_pages(files: list[Path]) -> list[tuple[str, list[np.ndarray]]]:
@@ -188,7 +189,9 @@ def assign(crops: list[Crop]) -> list[Question]:
 
     A number the model is sure of is taken as read. One it is unsure of is taken only when it is
     the next question (or the one after), the commonest case; otherwise the mark stays with the
-    answer above it, and that answer is flagged for the teacher to check."""
+    answer above it, and that answer is flagged for the teacher to check. A number that jumps
+    backwards or far ahead is flagged even when the model is sure: on the test booklet, half-covered
+    numbers were read with confidence as other numbers (26 as 21, 37 as 34)."""
     questions: list[Question] = []
     seen: dict[str, int] = {}
     current: Optional[Question] = None
@@ -210,9 +213,18 @@ def assign(crops: list[Crop]) -> list[Question]:
             number = number.replace(".", "")
             main = int(number)
         if same_number(number, cur):             # the same number again: "Ans 6." after "Q6.", or rewritten
-            c.kind = "question"
-            current.crops.append(c)
-            continue
+            if not (current.unsure and not unsure):
+                c.kind = "question"
+                current.crops.append(c)
+                continue
+            # The earlier, unsure reading was probably a different number ("1." read as 2 before
+            # a clear "2."): that answer becomes "?" for the teacher, and this one starts the question.
+            if seen.get(current.number) == current.crops[0].page:
+                del seen[current.number]
+            first = next((x for x in current.crops if x.kind == "question"), current.crops[0])
+            current.number, current.unsure = "?", False
+            current.flags = [f"number not readable (read as \"{first.label}\")"]
+            cur, cur_main = "?", None
         if cur_main is None:
             # No number to follow on from (the sheet may start at any question): take what is
             # read, and tell the teacher when the model was unsure of it.
@@ -248,6 +260,9 @@ def assign(crops: list[Crop]) -> list[Question]:
             seen[q.number] = c.page
         if unsure and cur_main is None and q.number != "?":
             q.flags.append(f"number read as \"{c.label}\", but not for sure: check it")
+            q.unsure = True
+        if cur_main is not None and q.number != "?" and not plausible and (main < cur_main or main > cur_main + 5):
+            q.flags.append(f"Q{q.number} comes after Q{cur}: check the number (it may be answered out of order)")
         questions.append(q)
         q.crops.append(c)
         current, last_point = q, 0

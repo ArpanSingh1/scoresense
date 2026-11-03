@@ -60,6 +60,7 @@ class Answer(TypedDict):
     needs_review: bool
     option: Optional[str]             # multiple choice only: the label, None when not trustworthy
     review_reasons: list[str]
+    tokens: list[tuple[str, float]]   # (token, logprob) as the model wrote them, for finer confidence
 
 
 def check_option(text: str, options: tuple[str, ...]) -> tuple[str, Optional[str], list[str]]:
@@ -98,7 +99,8 @@ def read_answer(image_path: str, question_id: str,
         data = json.load(resp)
 
     text = data["message"]["content"].strip().translate(ROMAN_NUMERALS)
-    logprobs = [t["logprob"] for t in data.get("logprobs") or [] if t.get("logprob") is not None]
+    tokens = [(t.get("token", ""), t["logprob"]) for t in data.get("logprobs") or [] if t.get("logprob") is not None]
+    logprobs = [lp for _, lp in tokens]
     confidence = math.exp(min(logprobs)) if logprobs else None
     confidence_mean = math.exp(sum(logprobs) / len(logprobs)) if logprobs else None
     reasons = []
@@ -112,4 +114,4 @@ def read_answer(image_path: str, question_id: str,
         text, option, option_reasons = check_option(text, options)
         reasons += option_reasons
     return {"text": text, "confidence": confidence, "confidence_mean": confidence_mean,
-            "needs_review": bool(reasons), "option": option, "review_reasons": reasons}
+            "needs_review": bool(reasons), "option": option, "review_reasons": reasons, "tokens": tokens}
