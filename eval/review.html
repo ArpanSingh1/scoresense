@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review marks</title>
+<!--
+Teacher review of the marks mark.py wrote.
+
+Open this file in a browser, choose the crops folder (the one with crops.csv
+and crops/) and the marks.csv mark.py wrote. Each answer sent for review is
+shown with its image, what the model read, the key answer and why it needs a
+look; give it marks with one click. Answers the model marked wrong are listed
+too, to confirm before marks are released. Download marks_final.csv at the end.
+
+Nothing leaves the computer: no network requests, no uploads. Decisions are
+kept in this browser's local storage so a closed tab doesn't lose them.
+-->
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66;
+    --line: #d9d9d4; --accent: #2457c5; --accent-text: #fff;
+    --ok: #1f7a3d; --bad: #b3261e; --warn: #a3520c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #20201e; --text: #ecece8; --muted: #a0a09a;
+      --line: #3a3a37; --accent: #6f9bff; --accent-text: #0b1530;
+      --ok: #5fc983; --bad: #ff8a80; --warn: #f0a35e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .spread { justify-content: space-between; }
+  button, .file { font: inherit; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line);
+                  background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary, .file.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.full { border-color: var(--ok); color: var(--ok); }
+  button.zero { border-color: var(--bad); color: var(--bad); }
+  button.on.full { background: var(--ok); color: var(--panel); }
+  button.on.zero { background: var(--bad); color: var(--panel); }
+  .file input { display: none; }
+  .tabs button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .item { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-top: 12px; background: var(--panel); }
+  .item.done { opacity: .7; }
+  .item img { display: block; max-width: 100%; max-height: 260px; background: #fff; border: 1px solid var(--line);
+              border-radius: 4px; margin: 8px 0; }
+  .facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+  .reason { color: var(--warn); }
+  .tag { font-size: .85rem; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); }
+  .tag.review { color: var(--warn); border-color: var(--warn); }
+  .tag.wrong { color: var(--bad); border-color: var(--bad); }
+  .tag.correct { color: var(--ok); border-color: var(--ok); }
+  input[type=number] { font: inherit; width: 5em; padding: 6px 8px; border: 1px solid var(--line);
+                       border-radius: 6px; background: var(--bg); color: var(--text); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  #error { color: var(--bad); white-space: pre-wrap; margin-top: 8px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Review marks</h1>
+  <div class="muted">Check the answers the model was unsure about, then download the final marks. Nothing leaves this computer.</div>
+
+  <div class="panel">
+    <div class="row">
+      <label class="file primary">1. Choose crops folder
+        <input id="folder" type="file" webkitdirectory multiple>
+      </label>
+      <label class="file primary">2. Choose marks.csv
+        <input id="marks" type="file" accept=".csv,text/csv">
+      </label>
+    </div>
+    <div id="loaded" class="muted" style="margin-top:8px"></div>
+    <div id="error"></div>
+  </div>
+
+  <div id="work" hidden>
+    <div class="panel">
+      <h2>Totals</h2>
+      <div class="table-wrap"><table id="totals"></table></div>
+      <div class="row spread" style="margin-top:12px">
+        <span id="progress" class="muted"></span>
+        <button id="download" class="primary">Download marks_final.csv</button>
+      </div>
+    </div>
+
+    <div class="row tabs" style="margin-top:16px">
+      <button data-show="review">To review</button>
+      <button data-show="wrong">Marked wrong by the model</button>
+      <button data-show="all">All answers</button>
+    </div>
+    <div id="list"></div>
+  </div>
+</main>
+
+<script>
+// --- CSV (RFC 4180, same dialect Python's csv module reads and writes) ---
+function parseCsv(text) {
+  text = text.replace(/^﻿/, "");
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  const [header = [], ...body] = rows.filter(r => !(r.length === 1 && r[0] === ""));
+  return { header, records: body.map(r => Object.fromEntries(header.map((h, j) => [h, r[j] ?? ""]))) };
+}
+
+function csvField(s) {
+  s = String(s);
+  return /[",\r\n]/.test(s) || s !== s.trim() ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function toCsv(header, records) {
+  return [header, ...records.map(r => header.map(h => r[h] ?? ""))]
+    .map(r => r.map(csvField).join(",")).join("\r\n") + "\r\n";
+}
+
+// --- State ---
+const MARKS_COLUMNS = ["sheet_file", "question_id", "crop_id", "model_read", "answer_read",
+                       "key_answer", "result", "marks", "out_of", "review_reasons"];
+let imageFor = null;     // crop_id -> File
+let marksRows = null;    // rows of marks.csv
+let decisions = {};      // crop_id -> marks the teacher gave (number)
+let show = "review";
+let storageKey = null;
+
+const $ = id => document.getElementById(id);
+const showError = msg => { $("error").textContent = msg; };
+const sheetName = r => r.sheet_file || "(no sheet key)";
+const fmt = n => Number.isInteger(n) ? String(n) : n.toFixed(1);
+
+function persist() {
+  try { localStorage.setItem(storageKey, JSON.stringify(decisions)); } catch {}
+}
+
+function restore() {
+  try { decisions = JSON.parse(localStorage.getItem(storageKey) || "{}") || {}; } catch { decisions = {}; }
+}
+
+$("folder").addEventListener("change", async ev => {
+  showError("");
+  const files = [...ev.target.files];
+  if (!files.length) return;
+  const root = files[0].webkitRelativePath.split("/")[0];
+  const byPath = new Map(files.map(f => [f.webkitRelativePath.slice(root.length + 1), f]));
+  const cropsFile = byPath.get("crops.csv");
+  if (!cropsFile) return showError(`No crops.csv in "${root}". Choose the folder cut_crops.py wrote (its --out-dir).`);
+  const byName = new Map(files.map(f => [f.name, f]));
+  imageFor = new Map();
+  for (const r of parseCsv(await cropsFile.text()).records) {
+    const rel = (r.image_path || "").replace(/\\/g, "/");
+    const file = byPath.get(rel) || byName.get(rel.split("/").pop());
+    if (file) imageFor.set(r.crop_id, file);
+  }
+  $("loaded").dataset.folder = `${root}: ${imageFor.size} crop images`;
+  start();
+});
+
+$("marks").addEventListener("change", async ev => {
+  showError("");
+  const file = ev.target.files[0];
+  if (!file) return;
+  const parsed = parseCsv(await file.text());
+  const missing = MARKS_COLUMNS.filter(c => !parsed.header.includes(c));
+  if (missing.length) return showError(`${file.name} is missing columns [${missing}]. Choose the marks.csv mark.py wrote.`);
+  marksRows = parsed.records;
+  $("loaded").dataset.marks = `${file.name}: ${marksRows.length} answers`;
+  start();
+});
+
+function start() {
+  $("loaded").textContent = [$("loaded").dataset.folder, $("loaded").dataset.marks].filter(Boolean).join(" · ");
+  if (!imageFor || !marksRows) return;
+  const noImage = marksRows.filter(r => !imageFor.has(r.crop_id)).length;
+  if (noImage) showError(`${noImage} answer(s) have no image in the chosen folder; they are listed without one.`);
+  storageKey = "review-marks:" + marksRows.map(r => r.crop_id).join("|");
+  restore();
+  $("work").hidden = false;
+  render();
+}
+
+// --- Marks ---
+function finalMarks(r) {
+  if (r.crop_id in decisions) return decisions[r.crop_id];
+  return r.result === "review" ? null : Number(r.marks);
+}
+
+function decide(r, value) {
+  if (value === null) delete decisions[r.crop_id];
+  else decisions[r.crop_id] = Math.max(0, Math.min(Number(r.out_of), value));
+  persist();
+  render();
+}
+
+// --- Rendering ---
+function renderTotals() {
+  const sheets = new Map();
+  for (const r of marksRows) {
+    const t = sheets.get(sheetName(r)) || { marks: 0, outOf: 0, pending: 0 };
+    const m = finalMarks(r);
+    t.outOf += Number(r.out_of);
+    if (m === null) t.pending++; else t.marks += m;
+    sheets.set(sheetName(r), t);
+  }
+  const rows = [...sheets].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+  $("totals").innerHTML = "<tr><th>Sheet</th><th class=num>Marks</th><th class=num>Out of</th><th class=num>Still to review</th></tr>";
+  for (const [name, t] of rows) {
+    const tr = $("totals").insertRow();
+    for (const [v, cls] of [[name, ""], [fmt(t.marks), "num"], [fmt(t.outOf), "num"], [t.pending || "done", "num"]]) {
+      const td = tr.insertCell(); td.textContent = v; td.className = cls;
+    }
+  }
+  const toReview = marksRows.filter(r => r.result === "review");
+  const done = toReview.filter(r => r.crop_id in decisions).length;
+  const wrong = marksRows.filter(r => r.result === "wrong");
+  const wrongChecked = wrong.filter(r => r.crop_id in decisions).length;
+  $("progress").textContent = `Reviewed ${done} of ${toReview.length} flagged answers · `
+    + `confirmed ${wrongChecked} of ${wrong.length} marked wrong`;
+}
+
+function item(r) {
+  const el = document.createElement("div");
+  const m = finalMarks(r);
+  const decided = r.crop_id in decisions;
+  el.className = "item" + (decided ? " done" : "");
+
+  const head = document.createElement("div");
+  head.className = "row spread";
+  const title = document.createElement("b");
+  title.textContent = `${sheetName(r)} · ${r.question_id}`;
+  const tag = document.createElement("span");
+  tag.className = "tag " + r.result;
+  tag.textContent = decided ? `teacher: ${fmt(m)} / ${r.out_of}`
+    : r.result === "review" ? "needs review" : `model: ${r.result} (${r.marks} / ${r.out_of})`;
+  head.append(title, tag);
+  el.appendChild(head);
+
+  const file = imageFor.get(r.crop_id);
+  if (file) {
+    const img = document.createElement("img");
+    img.alt = `answer to ${r.question_id}`;
+    img.src = URL.createObjectURL(file);
+    img.onload = () => URL.revokeObjectURL(img.src);
+    el.appendChild(img);
+  }
+
+  const facts = document.createElement("dl");
+  facts.className = "facts";
+  const fact = (label, value, cls) => {
+    const dt = document.createElement("dt"); dt.textContent = label;
+    const dd = document.createElement("dd"); dd.textContent = value || "—"; if (cls) dd.className = cls;
+    facts.append(dt, dd);
+  };
+  fact("Model read", r.model_read);
+  if (r.answer_read && r.answer_read !== r.model_read) fact("Answer taken", r.answer_read);
+  fact("Key", r.key_answer || "(long answer: use your judgement)");
+  if (r.review_reasons) fact("Why", r.review_reasons, "reason");
+  el.appendChild(facts);
+
+  const actions = document.createElement("div");
+  actions.className = "row";
+  actions.style.marginTop = "10px";
+  const outOf = Number(r.out_of);
+  const full = document.createElement("button");
+  full.className = "full" + (decided && m === outOf ? " on" : "");
+  full.textContent = `Full marks (${fmt(outOf)})`;
+  full.onclick = () => decide(r, outOf);
+  const zero = document.createElement("button");
+  zero.className = "zero" + (decided && m === 0 ? " on" : "");
+  zero.textContent = "0 marks";
+  zero.onclick = () => decide(r, 0);
+  actions.append(full, zero);
+  if (outOf > 1) {
+    const box = document.createElement("input");
+    box.type = "number"; box.min = 0; box.max = outOf; box.step = 0.5;
+    box.value = decided ? m : "";
+    box.placeholder = "marks";
+    box.setAttribute("aria-label", `Marks out of ${outOf}`);
+    box.onchange = () => box.value === "" ? decide(r, null) : decide(r, Number(box.value));
+    actions.append(box);
+  }
+  if (decided) {
+    const undo = document.createElement("button");
+    undo.textContent = "Undo";
+    undo.onclick = () => decide(r, null);
+    actions.append(undo);
+  }
+  el.appendChild(actions);
+  return el;
+}
+
+function render() {
+  renderTotals();
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.show === show));
+  const list = $("list");
+  list.replaceChildren();
+  const rows = marksRows.filter(r => show === "all" || r.result === show);
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "panel muted";
+    empty.textContent = show === "review" ? "Nothing was sent for review." : "None.";
+    list.appendChild(empty);
+  }
+  // Undecided first, so the next one to look at is always at the top.
+  rows.sort((a, b) => (a.crop_id in decisions) - (b.crop_id in decisions));
+  for (const r of rows) list.appendChild(item(r));
+}
+
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => { show = b.dataset.show; render(); });
+
+$("download").onclick = () => {
+  const header = [...MARKS_COLUMNS, "final_marks", "decided_by"];
+  const records = marksRows.map(r => {
+    const m = finalMarks(r);
+    return { ...r, final_marks: m === null ? "" : fmt(m),
+             decided_by: r.crop_id in decisions ? "teacher" : r.result === "review" ? "" : "model" };
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([toCsv(header, records)], { type: "text/csv;charset=utf-8" }));
+  a.download = "marks_final.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>

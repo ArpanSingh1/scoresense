@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Answer regions</title>
+<!--
+Draw the answer regions for cut_crops.py on an image of the blank sheet.
+
+Open this file in a browser, choose the blank sheet image (the same file you
+pass to cut_crops.py as --template), drag a box around each answer area, then
+download regions.json. Coordinates are fractions of the image's width and
+height, which is what cut_crops.py reads.
+
+Nothing leaves the computer: no network requests, no uploads.
+-->
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66;
+    --line: #d9d9d4; --accent: #2457c5; --accent-text: #fff; --warn: #a3520c;
+    --box: #2457c5; --box-fill: rgba(36, 87, 197, .12); --sel: #d4380d; --sel-fill: rgba(212, 56, 13, .14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #20201e; --text: #ecece8; --muted: #a0a09a;
+      --line: #3a3a37; --accent: #6f9bff; --accent-text: #0b1530; --warn: #f0a35e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button, .file { font: inherit; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line);
+                  background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary, .file.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .file input { display: none; }
+  input[type=number], input[type=text] { font: inherit; padding: 6px 8px; border: 1px solid var(--line);
+                                         border-radius: 6px; background: var(--bg); color: var(--text); }
+  input[type=number] { width: 5em; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; margin-top: 16px; }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  #sheet { position: relative; user-select: none; touch-action: none; cursor: crosshair;
+           border: 1px solid var(--line); background: #fff; }
+  #sheet img { display: block; width: 100%; pointer-events: none; }
+  .box { position: absolute; border: 2px solid var(--box); background: var(--box-fill); }
+  .box.sel { border-color: var(--sel); background: var(--sel-fill); }
+  .box span { position: absolute; left: 0; top: -1.5em; font: 600 13px system-ui; color: #fff;
+              background: var(--box); padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+  .box.sel span { background: var(--sel); }
+  .region { border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-top: 8px; cursor: pointer; }
+  .region.sel { border-color: var(--sel); }
+  .region canvas { display: block; max-width: 100%; margin-top: 6px; background: #fff; border: 1px solid var(--line); }
+  .region input[type=text] { width: 7em; }
+  #error { color: var(--warn); white-space: pre-wrap; margin-top: 8px; }
+  ul { margin: 6px 0 0; padding-left: 20px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Answer regions</h1>
+  <div class="muted">Draw a box around each answer area on the blank sheet, then download regions.json for cut_crops.py.</div>
+
+  <div class="panel">
+    <div class="row">
+      <label class="file primary">Choose blank sheet image
+        <input id="image" type="file" accept="image/png,image/jpeg">
+      </label>
+      <label class="file">Open regions.json
+        <input id="json" type="file" accept=".json,application/json">
+      </label>
+      <label>Page <input id="page" type="number" min="1" value="1"></label>
+      <span id="image-name" class="muted"></span>
+    </div>
+    <div id="error"></div>
+    <details style="margin-top:12px">
+      <summary>How to draw regions</summary>
+      <ul>
+        <li>Use the same blank sheet image you will give cut_crops.py as <code>--template</code>.</li>
+        <li>Drag on the sheet to draw a box; it gets the next free name (Q1, Q2, ...). Rename it in the list.</li>
+        <li>Cover the whole space a student might write in, including past the printed lines.</li>
+        <li>Never include the name, roll number or any other identifying field.</li>
+        <li>Click a box to select it; <b>Delete</b> removes it. Arrow keys nudge it, Shift+arrows resize it.</li>
+        <li>For a multi-page paper, draw each page's image with its page number; open the saved regions.json first so the other pages are kept.</li>
+      </ul>
+    </details>
+  </div>
+
+  <div class="layout" id="work" hidden>
+    <div id="sheet"><img id="img" alt="blank answer sheet"></div>
+    <div>
+      <div class="panel" style="margin-top:0">
+        <div class="row" style="justify-content:space-between">
+          <b id="count"></b>
+          <button id="download" class="primary">Download regions.json</button>
+        </div>
+        <div id="other-pages" class="muted" style="margin-top:6px"></div>
+        <div id="list"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// --- regions.json (the format cut_crops.py's load_regions() reads) ---
+const round4 = v => Math.round(v * 10000) / 10000;
+
+function buildRegionsJson(regions) {
+  // regions: [{name, page, x0, y0, x1, y1}] in fractions; returns the JSON text.
+  const out = {};
+  for (const r of regions) {
+    out[r.name] = { page: r.page, x0: round4(r.x0), y0: round4(r.y0), x1: round4(r.x1), y1: round4(r.y1) };
+  }
+  return JSON.stringify(out, null, 2) + "\n";
+}
+
+function parseRegionsJson(text) {
+  const data = JSON.parse(text);
+  if (typeof data !== "object" || data === null || Array.isArray(data)) throw new Error("not a JSON object");
+  return Object.entries(data).map(([name, r]) => {
+    for (const k of ["page", "x0", "y0", "x1", "y1"])
+      if (typeof r[k] !== "number") throw new Error(`${name} is missing ${k}`);
+    return { name, page: r.page, x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1 };
+  });
+}
+
+// --- State ---
+const MIN_SIZE = 0.005;  // a box smaller than this (fraction of the page) is a stray click
+let regions = [];        // every page's regions, in order
+let selected = null;     // the selected region object
+let drawing = null;      // {x, y, region} while dragging
+let imageUrl = null;
+
+const $ = id => document.getElementById(id);
+const page = () => Math.max(1, parseInt($("page").value, 10) || 1);
+const clamp = v => Math.min(1, Math.max(0, v));
+const showError = msg => { $("error").textContent = msg; };
+
+function nextName() {
+  const taken = new Set(regions.map(r => r.name));
+  let n = 1;
+  while (taken.has("Q" + n)) n++;
+  return "Q" + n;
+}
+
+$("image").addEventListener("change", ev => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  if (imageUrl) URL.revokeObjectURL(imageUrl);
+  imageUrl = URL.createObjectURL(file);
+  $("img").onload = () => {
+    $("image-name").textContent = `${file.name}: ${$("img").naturalWidth} × ${$("img").naturalHeight} px`;
+    $("work").hidden = false;
+    render();
+  };
+  $("img").src = imageUrl;
+});
+
+$("json").addEventListener("change", async ev => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  try {
+    regions = parseRegionsJson(await file.text());
+    selected = null;
+    showError("");
+    render();
+  } catch (err) {
+    showError(`Could not read ${file.name}: ${err.message}`);
+  }
+  ev.target.value = "";
+});
+
+$("page").addEventListener("change", () => { selected = null; render(); });
+
+// --- Drawing on the sheet ---
+function pointFraction(ev) {
+  const rect = $("sheet").getBoundingClientRect();
+  return { x: clamp((ev.clientX - rect.left) / rect.width), y: clamp((ev.clientY - rect.top) / rect.height) };
+}
+
+$("sheet").addEventListener("pointerdown", ev => {
+  if (ev.button !== 0) return;
+  const hit = ev.target.closest(".box");
+  if (hit) { selected = regions[+hit.dataset.i]; render(); return; }
+  const p = pointFraction(ev);
+  const region = { name: nextName(), page: page(), x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+  regions.push(region);
+  drawing = { ...p, region };
+  selected = region;
+  $("sheet").setPointerCapture(ev.pointerId);
+  render();
+});
+
+$("sheet").addEventListener("pointermove", ev => {
+  if (!drawing) return;
+  const p = pointFraction(ev), r = drawing.region;
+  r.x0 = Math.min(drawing.x, p.x); r.x1 = Math.max(drawing.x, p.x);
+  r.y0 = Math.min(drawing.y, p.y); r.y1 = Math.max(drawing.y, p.y);
+  renderBoxes();
+});
+
+$("sheet").addEventListener("pointerup", () => {
+  if (!drawing) return;
+  const r = drawing.region;
+  drawing = null;
+  if (r.x1 - r.x0 < MIN_SIZE || r.y1 - r.y0 < MIN_SIZE) {
+    regions.splice(regions.indexOf(r), 1);
+    selected = null;
+  }
+  render();
+});
+
+document.addEventListener("keydown", ev => {
+  if (!selected || ev.target.matches("input")) return;
+  if (ev.key === "Delete" || ev.key === "Backspace") {
+    regions.splice(regions.indexOf(selected), 1);
+    selected = null;
+    render();
+    return;
+  }
+  const step = 1 / ($("img").naturalWidth || 1000) * 2;
+  const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[ev.key];
+  if (!d) return;
+  ev.preventDefault();
+  const r = selected;
+  if (ev.shiftKey) {
+    r.x1 = clamp(Math.max(r.x0 + MIN_SIZE, r.x1 + d[0]));
+    r.y1 = clamp(Math.max(r.y0 + MIN_SIZE, r.y1 + d[1]));
+  } else {
+    const dx = Math.min(1 - r.x1, Math.max(-r.x0, d[0])), dy = Math.min(1 - r.y1, Math.max(-r.y0, d[1]));
+    r.x0 += dx; r.x1 += dx; r.y0 += dy; r.y1 += dy;
+  }
+  render();
+});
+
+// --- Rendering ---
+function renderBoxes() {
+  const sheet = $("sheet");
+  sheet.querySelectorAll(".box").forEach(b => b.remove());
+  regions.forEach((r, i) => {
+    if (r.page !== page()) return;
+    const b = document.createElement("div");
+    b.className = "box" + (r === selected ? " sel" : "");
+    b.dataset.i = i;
+    Object.assign(b.style, { left: r.x0 * 100 + "%", top: r.y0 * 100 + "%",
+                             width: (r.x1 - r.x0) * 100 + "%", height: (r.y1 - r.y0) * 100 + "%" });
+    const label = document.createElement("span");
+    label.textContent = r.name;
+    b.appendChild(label);
+    sheet.appendChild(b);
+  });
+}
+
+function preview(r) {
+  // The crop as cut_crops.py cuts it from the template (its 5 px margin left out).
+  const img = $("img"), w = img.naturalWidth, h = img.naturalHeight;
+  const sx = Math.floor(r.x0 * w), sy = Math.floor(r.y0 * h);
+  const sw = Math.max(1, Math.round(r.x1 * w) - sx), sh = Math.max(1, Math.round(r.y1 * h) - sy);
+  const c = document.createElement("canvas");
+  c.width = sw; c.height = sh;
+  c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  return c;
+}
+
+function renderList() {
+  const here = regions.filter(r => r.page === page());
+  const others = regions.length - here.length;
+  $("count").textContent = `${here.length} region(s) on page ${page()}`;
+  $("other-pages").textContent = others ? `${others} region(s) on other pages are kept in the file.` : "";
+  $("download").disabled = regions.length === 0;
+  const list = $("list");
+  list.replaceChildren();
+  if (!here.length) {
+    list.innerHTML = '<div class="muted" style="margin-top:8px">Drag on the sheet to draw the first box.</div>';
+    return;
+  }
+  for (const r of here) {
+    const item = document.createElement("div");
+    item.className = "region" + (r === selected ? " sel" : "");
+    const row = document.createElement("div");
+    row.className = "row";
+    const name = document.createElement("input");
+    name.type = "text"; name.value = r.name; name.setAttribute("aria-label", "Region name");
+    name.onchange = () => {
+      const v = name.value.trim();
+      if (!v) { name.value = r.name; return showError("A region needs a name."); }
+      if (regions.some(o => o !== r && o.name === v)) { name.value = r.name; return showError(`${v} is already used.`); }
+      showError(""); r.name = v; renderBoxes();
+    };
+    const del = document.createElement("button");
+    del.textContent = "Delete";
+    del.onclick = ev => {
+      ev.stopPropagation();
+      regions.splice(regions.indexOf(r), 1);
+      if (selected === r) selected = null;
+      render();
+    };
+    const size = document.createElement("span");
+    size.className = "muted";
+    size.textContent = `${Math.round((r.x1 - r.x0) * $("img").naturalWidth)} × ${Math.round((r.y1 - r.y0) * $("img").naturalHeight)} px`;
+    row.append(name, size, del);
+    item.append(row, preview(r));
+    item.onclick = ev => { if (ev.target !== name) { selected = r; render(); } };
+    list.appendChild(item);
+  }
+}
+
+function render() {
+  if ($("work").hidden) return;
+  renderBoxes();
+  renderList();
+}
+
+$("download").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([buildRegionsJson(regions)], { type: "application/json" }));
+  a.download = "regions.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>

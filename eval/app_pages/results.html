@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScoreSense Answers</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1c2330; --muted: #5d6675; --line: #dfe3ea;
+    --accent: #2f5bea; --accent-soft: #eaf0ff; --warn: #a15c00; --warn-soft: #fff4e0; --warn-line: #f0c27a;
+    --ok: #17803d; --ok-soft: #e7f6ec;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  button, input, textarea { font: inherit; color: inherit; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--card); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1100px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; }
+  .bar h1 { font-size: 18px; margin: 0; }
+  .bar a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .student { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; width: 200px; }
+  .total { margin-left: auto; font-size: 16px; }
+  .total b { font-size: 20px; }
+  .btn { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 80px; }
+  .progress { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; }
+  .progress .msg { font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 12px; }
+  .spinner { width: 20px; height: 20px; flex: none; border: 3px solid var(--line); border-top-color: var(--accent);
+             border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .muted { color: var(--muted); }
+  .error { color: #b3261e; }
+  .scheme { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+  .scheme summary { cursor: pointer; font-weight: 600; }
+  .scheme textarea { width: 100%; min-height: 56px; margin: 10px 0 6px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+  .summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 16px; min-width: 120px; }
+  .stat b { display: block; font-size: 22px; }
+  .stat.warn b { color: var(--warn); }
+  .jump { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 20px; align-items: center; }
+  .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 2px 10px; font-size: 14px; cursor: pointer; }
+  .chip.warn { background: var(--warn-soft); border-color: var(--warn-line); color: var(--warn); font-weight: 600; }
+  .chip.done { background: var(--ok-soft); border-color: #a8dcb9; color: var(--ok); }
+  .chip:hover { border-color: var(--accent); }
+  .toggle { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
+  .q { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: hidden; scroll-margin-top: 90px; }
+  .q.flagged { border-color: var(--warn-line); }
+  .q.active { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent); }
+  .q-head { display: flex; align-items: center; gap: 10px 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .q-head h2 { margin: 0; font-size: 20px; }
+  .q-head .pages { color: var(--muted); font-size: 14px; }
+  .key { background: var(--ok-soft); color: var(--ok); border-radius: 6px; padding: 1px 8px; font-weight: 600; font-size: 14px; }
+  .marker { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .marker .m { min-width: 36px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); cursor: pointer; font-weight: 600; }
+  .marker .m:hover { border-color: var(--accent); }
+  .marker .m.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .marker input { width: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; text-align: right; }
+  .marker .of { color: var(--muted); }
+  .marker .tick { color: var(--ok); font-weight: 700; width: 16px; }
+  .flag { background: var(--warn-soft); color: var(--warn); padding: 6px 16px; font-size: 14px; border-bottom: 1px solid var(--warn-line); }
+  .crop { padding: 8px 16px 12px; }
+  .crop + .crop { border-top: 1px dashed var(--line); }
+  .crop .tag { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .crop img { display: block; max-width: 100%; height: auto; border-radius: 6px; cursor: zoom-in; border: 1px solid var(--line); }
+  .keys { font-size: 13px; color: var(--muted); margin: -8px 0 16px; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--card); font: 12px/1.6 ui-monospace, Consolas, monospace; }
+  dialog { border: none; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
+  dialog::backdrop { background: rgba(10, 14, 22, .8); }
+  dialog img { max-width: 96vw; max-height: 92vh; display: block; border-radius: 8px; cursor: zoom-out; }
+  @media (max-width: 640px) { .total { margin-left: 0; } .student { width: 100%; } }
+</style>
+</head>
+<body>
+<header><div class="bar">
+  <h1>Answers by question</h1>
+  <input class="student" id="student" placeholder="Student name or roll no." aria-label="Student name or roll number">
+  <span class="total" id="total"></span>
+  <button class="btn primary" id="download" type="button">Download marks</button>
+  <a href="/">Upload another paper</a>
+</div></header>
+<main>
+  <div class="progress" id="progress">
+    <div class="msg"><div class="spinner"></div><span id="msg">Starting…</span></div>
+    <div class="muted" id="elapsed"></div>
+  </div>
+  <details class="scheme" id="scheme-box">
+    <summary>Marks scheme: <span id="scheme-short" class="muted"></span></summary>
+    <textarea id="scheme" spellcheck="false" placeholder="1-20:1, 21-25:2, 26-31:3, 32-35:5, 36-38:4"></textarea>
+    <div class="muted">Marks per question, e.g. <b>1-20:1, 21-25:2, 26-31:3, 32-35:5, 36-38:4</b>. A part can have its own: <b>34.1:1</b>. It is remembered for the next paper.</div>
+  </details>
+  <div id="out" hidden>
+    <div class="summary" id="summary"></div>
+    <div class="jump" id="jump"></div>
+    <div class="keys">Keyboard: <kbd>0</kbd>–<kbd>9</kbd> gives that mark and moves on, <kbd>H</kbd> adds a half, <kbd>Enter</kbd> next, <kbd>Backspace</kbd> clears.</div>
+    <div id="list"></div>
+  </div>
+</main>
+<dialog id="zoom"><img alt="" id="zoom-img"></dialog>
+<script>
+  const jobId = location.pathname.split("/").pop();
+  const $ = id => document.getElementById(id);
+  const KIND = { question: "", point: "numbered point", continuation: "continued", note: "margin note" };
+  let result = null, scheme = {}, marks = {}, active = null;   // marks: question index -> number
+  let key = {};                                                  // MCQ answer key from Exam setup: "1" -> "B"
+
+  function el(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : e.setAttribute(k, v);
+    for (const k of kids) e.append(k);
+    return e;
+  }
+  const fmt = n => String(Math.round(n * 100) / 100);
+
+  // "1-20:1, 21-25:2, 34.1:1" -> {exact: {"34.1": 1}, ranges: [[1, 20, 1], ...]}
+  function parseScheme(text) {
+    const s = { exact: {}, ranges: [] };
+    for (const part of text.split(/[,;\n]+/)) {
+      const m = part.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-\s*(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)$/);
+      if (!m) continue;
+      if (m[2]) s.ranges.push([+m[1], +m[2], +m[3]]);
+      else s.exact[m[1]] = +m[3];
+    }
+    return s;
+  }
+  function outOf(number) {
+    if (number in scheme.exact) return scheme.exact[number];
+    const main = parseInt(number, 10);
+    if (Number.isNaN(main)) return null;
+    if (String(main) in scheme.exact) return scheme.exact[String(main)];
+    const r = scheme.ranges.find(([a, b]) => main >= a && main <= b);
+    return r ? r[2] : null;
+  }
+  const markable = q => q.number !== "start";
+  const markables = () => result ? result.questions.map((q, i) => [q, i]).filter(([q]) => markable(q)) : [];
+
+  function updateTotal() {
+    const qs = markables();
+    let got = 0, max = 0, left = 0;
+    for (const [q, i] of qs) {
+      const o = outOf(q.number);
+      if (o != null) max += o;
+      if (marks[i] == null) left++; else got += marks[i];
+    }
+    $("total").replaceChildren("Total ", el("b", {}, fmt(got)), max ? ` / ${fmt(max)}` : "",
+      el("span", { class: "muted" }, left ? ` · ${left} left` : " · all marked"));
+    for (const [q, i] of qs) {
+      const chip = document.querySelector(`.chip[data-i="${i}"]`);
+      if (chip) chip.classList.toggle("done", marks[i] != null && !q.flags.length);
+    }
+  }
+
+  let saveTimer;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => fetch(`/api/job/${jobId}/marks`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scheme: $("scheme").value, student: $("student").value,
+        marks: Object.fromEntries(markables().map(([q, i]) => [i, { number: q.number, mark: marks[i] ?? null, out_of: outOf(q.number) }])) })
+    }), 400);
+  }
+
+  function setMark(i, value) {
+    const o = outOf(result.questions[i].number);
+    if (value != null && (Number.isNaN(value) || value < 0 || (o != null && value > o))) return false;
+    if (value == null) delete marks[i]; else marks[i] = value;
+    drawMarker(i);
+    updateTotal();
+    save();
+    return true;
+  }
+
+  function drawMarker(i) {
+    const box = document.querySelector(`#q${i} .marker`);
+    if (!box) return;
+    const o = outOf(result.questions[i].number), v = marks[i];
+    const kids = [];
+    if (o != null && o <= 6) {
+      for (let n = 0; n <= o; n++) {
+        const b = el("button", { class: "m" + (v === n ? " on" : ""), type: "button", title: `${n} mark${n === 1 ? "" : "s"}` }, String(n));
+        b.onclick = e => { e.stopPropagation(); setMark(i, v === n ? null : n); activate(i); };
+        kids.push(b);
+      }
+    }
+    const input = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", "aria-label": "Marks", placeholder: "–" });
+    if (o != null) input.max = String(o);
+    input.value = v == null ? "" : fmt(v);
+    input.onclick = e => e.stopPropagation();
+    input.onchange = () => { if (!setMark(i, input.value === "" ? null : parseFloat(input.value))) input.value = v == null ? "" : fmt(v); };
+    input.onkeydown = e => e.stopPropagation();
+    kids.push(input, el("span", { class: "of" }, o != null ? `/ ${fmt(o)}` : "/ ?"), el("span", { class: "tick" }, v != null ? "✓" : ""));
+    box.replaceChildren(...kids);
+  }
+
+  function activate(i, scroll = false) {
+    document.querySelectorAll(".q.active").forEach(c => c.classList.remove("active"));
+    active = i;
+    const card = $("q" + i);
+    if (!card) return;
+    card.classList.add("active");
+    if (scroll) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  function next() {
+    const ids = markables().map(([, i]) => i).filter(i => !$("q" + i).hidden);
+    const after = ids.filter(i => i > (active ?? -1));
+    const target = after.find(i => marks[i] == null) ?? after[0];
+    if (target != null) activate(target, true);
+  }
+
+  function render(r) {
+    result = r;
+    const qs = r.questions.map((q, i) => [q, i]).filter(([q]) => q.number !== "start" || q.crops.length);
+    const flagged = qs.filter(([q]) => q.flags.length);
+    const numbered = qs.filter(([q]) => !["?", "start"].includes(q.number));
+    $("summary").replaceChildren(
+      el("div", { class: "stat" }, el("b", {}, String(r.pages)), "pages"),
+      el("div", { class: "stat" }, el("b", {}, String(numbered.length)), "answers found"),
+      el("div", { class: "stat" + (flagged.length ? " warn" : "") }, el("b", {}, String(flagged.length)), "need a look"));
+
+    const only = el("input", { type: "checkbox", id: "only" });
+    $("jump").replaceChildren(el("span", { class: "muted" }, "Go to:"),
+      ...qs.filter(([q]) => markable(q)).map(([q, i]) => {
+        const b = el("button", { class: "chip" + (q.flags.length ? " warn" : ""), type: "button", "data-i": String(i) }, "Q" + q.number);
+        b.onclick = () => activate(i, true);
+        return b;
+      }),
+      el("label", { class: "toggle" }, only, "Only ones that need a look"));
+    only.onchange = () => qs.forEach(([q, i]) => $("q" + i).hidden = only.checked && !q.flags.length);
+
+    $("list").replaceChildren(...qs.map(([q, i]) => {
+      const pages = [...new Set(q.crops.map(c => c.page))];
+      const card = el("section", { class: "q" + (q.flags.length ? " flagged" : ""), id: "q" + i },
+        el("div", { class: "q-head" },
+           el("h2", {}, q.number === "start" ? "Before the first question" : q.number === "?" ? "Question ?" : "Q" + q.number),
+           el("span", { class: "pages" }, (pages.length > 1 ? "pages " : "page ") + pages.join(", ")),
+           ...(key[q.number] ? [el("span", { class: "key" }, "Key: " + key[q.number])] : []),
+           ...(markable(q) ? [el("div", { class: "marker" })] : [])),
+        ...q.flags.map(f => el("div", { class: "flag" }, "⚠ " + f)));
+      if (markable(q)) card.onclick = () => activate(i);
+      for (const c of q.crops) {
+        const img = el("img", { src: `/job/${jobId}/crops/${c.file}`, alt: `Answer crop, page ${c.page}`, loading: "lazy" });
+        img.onclick = e => { e.stopPropagation(); activate(i); $("zoom-img").src = img.src; $("zoom").showModal(); };
+        const bits = [`page ${c.page}`];
+        if (KIND[c.kind]) bits.push(KIND[c.kind]);
+        if (c.label) bits.push(`number read: “${c.label}”`);
+        card.append(el("div", { class: "crop" }, el("div", { class: "tag" }, bits.join(" · ")), img));
+      }
+      return card;
+    }));
+    qs.forEach(([, i]) => drawMarker(i));
+    if (active != null) activate(active);
+    updateTotal();
+    $("out").hidden = false;
+  }
+
+  function applyScheme() {
+    scheme = parseScheme($("scheme").value);
+    const n = scheme.ranges.length + Object.keys(scheme.exact).length;
+    $("scheme-short").textContent = n ? $("scheme").value.replace(/\s*\n\s*/g, ", ") : "not set yet: set it to see marks out of";
+    if (result) { markables().forEach(([, i]) => drawMarker(i)); updateTotal(); }
+  }
+  $("scheme").oninput = () => { applyScheme(); save(); };
+  $("student").oninput = save;
+  $("download").onclick = async () => {
+    clearTimeout(saveTimer);
+    await fetch(`/api/job/${jobId}/marks`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scheme: $("scheme").value, student: $("student").value,
+        marks: Object.fromEntries(markables().map(([q, i]) => [i, { number: q.number, mark: marks[i] ?? null, out_of: outOf(q.number) }])) })
+    });
+    location.href = `/job/${jobId}/marks.csv`;
+  };
+
+  document.addEventListener("keydown", e => {
+    if (!result || e.target.matches("input, textarea") || e.ctrlKey || e.metaKey || e.altKey || $("zoom").open) return;
+    if (active == null && /^[0-9]$|^Enter$/.test(e.key)) { next(); if (e.key === "Enter") { e.preventDefault(); return; } }
+    if (active == null) return;
+    if (/^[0-9]$/.test(e.key)) { if (setMark(active, +e.key)) next(); e.preventDefault(); }
+    else if (e.key === "h" || e.key === "H") { setMark(active, (marks[active] ?? 0) + 0.5); e.preventDefault(); }
+    else if (e.key === "Backspace" || e.key === "Delete") { setMark(active, null); e.preventDefault(); }
+    else if (e.key === "Enter") { next(); e.preventDefault(); }
+  });
+
+  let shown = "";
+  function show(r) {                     // re-render only when something new came in
+    const key = JSON.stringify(r);
+    if (key !== shown) { shown = key; render(r); }
+  }
+
+  async function poll() {
+    let j;
+    try { j = await (await fetch(`/api/job/${jobId}`)).json(); }
+    catch { $("msg").textContent = "Lost contact with ScoreSense. Is it still running?"; setTimeout(poll, 3000); return; }
+    if (j.files.length) $("files")?.replaceChildren(j.files.join(", "));
+    if (j.result) show(j.result);
+    if (j.status === "done") { $("progress").hidden = true; return; }
+    if (j.status === "failed") {
+      $("progress").querySelector(".spinner")?.remove();
+      $("msg").className = "error";
+      $("msg").textContent = "Something went wrong: " + j.message;
+      return;
+    }
+    $("msg").textContent = j.message;
+    $("elapsed").textContent = `${Math.floor(j.seconds / 60)} min ${j.seconds % 60} s so far · you can start marking the answers already shown`;
+    setTimeout(poll, 1500);
+  }
+
+  (async () => {
+    try {
+      const saved = await (await fetch(`/api/job/${jobId}/marks`)).json();
+      $("scheme").value = saved.scheme || "";
+      $("student").value = saved.student || "";
+      for (const [i, m] of Object.entries(saved.marks || {})) if (m.mark != null) marks[i] = m.mark;
+    } catch {}
+    try { key = (await (await fetch("/api/exam")).json()).exam.key || {}; } catch {}
+    applyScheme();
+    if (!$("scheme").value) $("scheme-box").open = true;
+    $("zoom").onclick = () => $("zoom").close();
+    poll();
+  })();
+</script>
+</body>
+</html>

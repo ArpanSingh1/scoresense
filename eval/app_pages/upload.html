@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScoreSense</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1c2330; --muted: #5d6675; --line: #dfe3ea;
+    --accent: #2f5bea; --accent-soft: #eaf0ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 72px 16px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  p.lead { color: var(--muted); margin: 0 0 32px; }
+  label.drop {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    min-height: 260px; padding: 32px; text-align: center; cursor: pointer;
+    background: var(--card); border: 2px dashed var(--line); border-radius: 16px;
+    transition: border-color .15s, background .15s;
+  }
+  label.drop:hover, label.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  label.drop svg { width: 48px; height: 48px; color: var(--accent); }
+  .big { font-size: 20px; font-weight: 600; }
+  .small { color: var(--muted); font-size: 14px; }
+  input[type=file] { display: none; }
+  .busy { display: none; margin-top: 24px; align-items: center; gap: 12px; color: var(--muted); }
+  .busy.on { display: flex; }
+  .spinner { width: 20px; height: 20px; border: 3px solid var(--line); border-top-color: var(--accent);
+             border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .note { margin-top: 32px; font-size: 14px; color: var(--muted); }
+  a.exam { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin: 0 0 16px; padding: 12px 16px;
+           background: var(--card); border: 1px solid var(--line); border-radius: 12px; color: var(--ink); text-decoration: none; font-size: 14px; }
+  a.exam:hover { border-color: var(--accent); }
+  a.exam b { color: var(--accent); white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ScoreSense</h1>
+  <p class="lead">Upload one student's answer booklet. The next page shows each answer cut out and sorted by question number.</p>
+  <a class="exam" href="/exam"><span id="exam-text">No exam set up yet: upload the question paper to get the marks scheme and MCQ key</span><b>Set up exam &rsaquo;</b></a>
+
+  <form id="form" action="/upload" method="post" enctype="multipart/form-data">
+    <label class="drop" id="drop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>
+      </svg>
+      <span class="big">Click to upload the answer paper</span>
+      <span class="small">or drop it here &middot; PDF, or photos of the pages (JPG, PNG) in page order</span>
+      <input id="files" type="file" name="files" accept=".pdf,.png,.jpg,.jpeg" multiple>
+    </label>
+  </form>
+  <div class="busy" id="busy"><div class="spinner"></div><span id="busy-text">Uploading&hellip;</span></div>
+
+  <p class="note">Everything stays on this computer.</p>
+</main>
+<script>
+  const form = document.getElementById("form"), input = document.getElementById("files"),
+        drop = document.getElementById("drop"), busy = document.getElementById("busy");
+  function send() {
+    if (!input.files.length) return;
+    document.getElementById("busy-text").textContent =
+      `Uploading ${input.files.length} file${input.files.length > 1 ? "s" : ""}…`;
+    busy.classList.add("on");
+    form.submit();
+  }
+  input.addEventListener("change", send);
+  fetch("/api/exam").then(r => r.json()).then(({ exam }) => {
+    if (!exam.scheme) return;
+    const keyed = Object.keys(exam.key || {}).length, mcq = (exam.mcq || []).length;
+    document.getElementById("exam-text").textContent = `Exam: ${exam.name || "unnamed"} · marks scheme set` +
+      (mcq ? ` · MCQ key ${keyed} of ${mcq}` : "");
+  }).catch(() => {});
+  ["dragenter", "dragover"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", ev => { input.files = ev.dataTransfer.files; send(); });
+</script>
+</body>
+</html>

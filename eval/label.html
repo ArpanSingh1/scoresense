@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Label answer crops</title>
+<!--
+Offline labelling page for the crops cut_crops.py writes.
+
+Open this file in a browser, choose the crops folder (the --out-dir that holds
+crops.csv, labels.csv and crops/), type what each crop says, then download
+labels.csv and put it back in that folder in place of the blank one.
+
+Nothing leaves the computer: no network requests, no uploads. Work in progress
+is kept in this browser's local storage so a closed tab doesn't lose it.
+-->
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66;
+    --line: #d9d9d4; --accent: #2457c5; --accent-text: #fff; --ok: #1f7a3d; --warn: #a3520c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #20201e; --text: #ecece8; --muted: #a0a09a;
+      --line: #3a3a37; --accent: #6f9bff; --accent-text: #0b1530; --ok: #5fc983; --warn: #f0a35e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .spread { justify-content: space-between; }
+  button, .file { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
+                  background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary, .file { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .file input { display: none; }
+  #crop-box { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+              display: flex; justify-content: center; min-height: 120px; align-items: center; }
+  #crop { max-width: 100%; max-height: 50vh; }
+  #answer { width: 100%; font: 1.3rem/1.4 ui-monospace, Consolas, monospace; padding: 10px;
+            border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--ok); width: 0; }
+  .tag { font-size: .85rem; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
+  .tag.done { color: var(--ok); border-color: var(--ok); }
+  .tag.todo { color: var(--warn); border-color: var(--warn); }
+  #error { color: var(--warn); white-space: pre-wrap; }
+  ul { margin: 6px 0 0; padding-left: 20px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Label answer crops</h1>
+  <div class="muted">Type exactly what the student wrote. Nothing you type leaves this computer.</div>
+
+  <div class="panel">
+    <div class="row spread">
+      <label class="file">Choose crops folder
+        <input id="folder" type="file" webkitdirectory multiple>
+      </label>
+      <span id="folder-name" class="muted"></span>
+    </div>
+    <div id="error"></div>
+    <details style="margin-top:12px">
+      <summary>How to label</summary>
+      <ul>
+        <li>Copy the answer exactly: keep spelling mistakes, capitals, spaces and punctuation as written (<code>photosynthesys</code>, <code>x=7</code>, <code>42,5</code>).</li>
+        <li>Leave out anything the student crossed out.</li>
+        <li>Nothing written: press <b>Blank answer</b>.</li>
+        <li>Can't read it: press <b>Can't read</b>.</li>
+        <li>Not sure yet: press <b>Skip</b>; skipped crops stay unlabelled and are left out of the score.</li>
+        <li><b>Enter</b> saves and moves on. Download <code>labels.csv</code> when finished.</li>
+      </ul>
+    </details>
+  </div>
+
+  <div id="work" class="panel" hidden>
+    <div class="row spread">
+      <div class="row">
+        <b id="position"></b>
+        <span id="meta" class="muted"></span>
+        <span id="status" class="tag"></span>
+      </div>
+      <span id="count" class="muted"></span>
+    </div>
+    <div class="bar" style="margin:10px 0 14px"><div id="progress"></div></div>
+    <div id="crop-box"><img id="crop" alt="answer crop"></div>
+    <input id="answer" type="text" autocomplete="off" spellcheck="false" style="margin-top:14px"
+           aria-label="What the student wrote">
+    <div class="row spread" style="margin-top:12px">
+      <div class="row">
+        <button id="prev">Back</button>
+        <button id="skip">Skip</button>
+        <button id="next-todo">Next unlabelled</button>
+      </div>
+      <div class="row">
+        <button id="illegible">Can't read</button>
+        <button id="blank">Blank answer</button>
+        <button id="save" class="primary">Save &amp; next</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="finish" class="panel" hidden>
+    <div class="row spread">
+      <span id="finish-text"></span>
+      <button id="download" class="primary">Download labels.csv</button>
+    </div>
+  </div>
+</main>
+
+<script>
+// --- CSV (RFC 4180, same dialect Python's csv module reads and writes) ---
+function parseCsv(text) {
+  text = text.replace(/^﻿/, "");
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  const [header = [], ...body] = rows.filter(r => !(r.length === 1 && r[0] === ""));
+  return { header, records: body.map(r => Object.fromEntries(header.map((h, j) => [h, r[j] ?? ""]))) };
+}
+
+function csvField(s) {
+  return /[",\r\n]/.test(s) || s !== s.trim() ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function toCsv(header, records) {
+  return [header, ...records.map(r => header.map(h => r[h] ?? ""))]
+    .map(r => r.map(csvField).join(",")).join("\r\n") + "\r\n";
+}
+
+// --- State ---
+const CROP_COLUMNS = ["crop_id", "question_id", "image_path"];
+// score.py reads these; an empty label means "not labelled yet".
+const BLANK = "[blank]", ILLEGIBLE = "[illegible]";
+let crops = [];          // [{crop_id, question_id, image_path, file}]
+let labels = {};         // crop_id -> text
+let done = new Set();    // crop_ids the labeller confirmed (a blank answer counts)
+let index = 0;
+let storageKey = null;
+let imageUrl = null;
+
+const $ = id => document.getElementById(id);
+
+function persist() {
+  try { localStorage.setItem(storageKey, JSON.stringify({ labels, done: [...done] })); } catch {}
+}
+
+function restore() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+    if (!saved) return false;
+    labels = { ...labels, ...saved.labels };
+    done = new Set([...done, ...saved.done]);
+    return true;
+  } catch { return false; }
+}
+
+function showError(msg) { $("error").textContent = msg; }
+
+$("folder").addEventListener("change", async ev => {
+  showError("");
+  const files = [...ev.target.files];
+  if (!files.length) return;
+  const root = files[0].webkitRelativePath.split("/")[0];
+  const byPath = new Map(files.map(f => [f.webkitRelativePath.slice(root.length + 1), f]));
+
+  const cropsFile = byPath.get("crops.csv");
+  if (!cropsFile) return showError(`No crops.csv in "${root}". Choose the folder cut_crops.py wrote (its --out-dir).`);
+  const parsed = parseCsv(await cropsFile.text());
+  if (parsed.header.join() !== CROP_COLUMNS.join())
+    return showError(`crops.csv has columns [${parsed.header}], expected [${CROP_COLUMNS}].`);
+
+  const missing = [];
+  crops = parsed.records.map(r => {
+    const file = byPath.get(r.image_path.replace(/\\/g, "/"));
+    if (!file) missing.push(r.image_path);
+    return { ...r, file };
+  });
+  if (missing.length)
+    return showError(`${missing.length} image(s) listed in crops.csv are not in the folder, e.g. ${missing.slice(0, 3).join(", ")}`);
+
+  labels = {}; done = new Set();
+  const labelsFile = byPath.get("labels.csv");
+  if (labelsFile) {
+    for (const r of parseCsv(await labelsFile.text()).records) {
+      labels[r.crop_id] = r.ground_truth_text ?? "";
+      if (labels[r.crop_id] !== "") done.add(r.crop_id);
+    }
+  }
+  storageKey = "label-crops:" + root + ":" + crops.map(c => c.crop_id).join("|");
+  const resumed = restore();
+
+  $("folder-name").textContent = `${root}: ${crops.length} crops` + (resumed ? " (resumed unsaved work)" : "");
+  $("work").hidden = $("finish").hidden = false;
+  const firstTodo = crops.findIndex(c => !done.has(c.crop_id));
+  show(firstTodo === -1 ? 0 : firstTodo);
+});
+
+function show(i) {
+  index = Math.max(0, Math.min(crops.length - 1, i));
+  const c = crops[index];
+  if (imageUrl) URL.revokeObjectURL(imageUrl);
+  imageUrl = URL.createObjectURL(c.file);
+  $("crop").src = imageUrl;
+  $("position").textContent = `${index + 1} / ${crops.length}`;
+  $("meta").textContent = `${c.crop_id} · ${c.question_id}`;
+  const isDone = done.has(c.crop_id);
+  $("status").textContent = !isDone ? "not labelled"
+    : labels[c.crop_id] === BLANK ? "blank answer"
+    : labels[c.crop_id] === ILLEGIBLE ? "can't read" : "labelled";
+  $("status").className = "tag " + (isDone ? "done" : "todo");
+  $("answer").value = [BLANK, ILLEGIBLE].includes(labels[c.crop_id]) ? "" : labels[c.crop_id] ?? "";
+  $("prev").disabled = index === 0;
+  const n = done.size;
+  $("count").textContent = `${n} of ${crops.length} labelled`;
+  $("progress").style.width = (100 * n / crops.length) + "%";
+  $("finish-text").textContent = n === crops.length
+    ? "All crops labelled."
+    : `${crops.length - n} crop(s) still unlabelled; they stay empty in labels.csv and score.py leaves them out.`;
+  $("answer").focus();
+}
+
+function nextTodo(from) {
+  for (let k = 1; k <= crops.length; k++) {
+    const j = (from + k) % crops.length;
+    if (!done.has(crops[j].crop_id)) return j;
+  }
+  return Math.min(from + 1, crops.length - 1);
+}
+
+function record(text) {
+  const id = crops[index].crop_id;
+  labels[id] = text.replace(/[\r\n]+/g, " ");
+  done.add(id);
+  persist();
+  show(index + 1 < crops.length ? index + 1 : nextTodo(index));
+}
+
+$("save").onclick = () => {
+  const text = $("answer").value;
+  if (text.trim() === "") return showError("Nothing typed. Use Blank answer if the student wrote nothing, Can't read, or Skip.");
+  showError("");
+  record(text);
+};
+$("blank").onclick = () => { showError(""); record(BLANK); };
+$("illegible").onclick = () => { showError(""); record(ILLEGIBLE); };
+$("skip").onclick = () => { showError(""); show(index + 1); };
+$("prev").onclick = () => { showError(""); show(index - 1); };
+$("next-todo").onclick = () => { showError(""); show(nextTodo(index)); };
+$("answer").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("save").click(); } });
+
+$("download").onclick = () => {
+  const csv = toCsv(["crop_id", "ground_truth_text"],
+                    crops.map(c => ({ crop_id: c.crop_id, ground_truth_text: labels[c.crop_id] ?? "" })));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = "labels.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>

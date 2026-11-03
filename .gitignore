@@ -1,0 +1,26 @@
+# Python environments: rebuilt on each computer by setup.bat / setup.sh
+venv/
+.venv*/
+__pycache__/
+*.pyc
+
+# Large downloaded programs
+tools/
+
+# Student data must never be committed. The app keeps it outside this folder
+# (C:\ocr_eval or ~/scoresense_data); these catch anything copied in by mistake.
+temp_uploads/
+eval/dataset/
+eval/predictions.csv
+eval/sanity_labels.csv
+**/scans/
+**/work/
+**/private/
+**/results/
+*.pdf
+*.jpg
+*.jpeg
+*.png
+labels*.csv
+marks*.csv
+.env

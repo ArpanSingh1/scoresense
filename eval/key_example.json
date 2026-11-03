@@ -1,0 +1,8 @@
+{
+  "Q1": {"type": "mcq", "options": "letters", "answer": "A", "marks": 1},
+  "Q2": {"type": "mcq", "options": "letters", "answer": "C", "marks": 1},
+  "Q3": {"type": "mcq", "options": "roman", "answer": "iii", "marks": 1},
+  "Q4": {"type": "text", "answer": ["Meghalaya"], "marks": 1},
+  "Q5": {"type": "text", "answer": ["photosynthesis"], "marks": 1},
+  "Q6": {"type": "manual", "marks": 5}
+}
