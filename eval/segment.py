@@ -41,6 +41,30 @@ def margin_x(red: np.ndarray) -> int | None:
     return int(np.where(cols >= cols.max() * 0.6)[0][0])
 
 
+def line_x(img: np.ndarray) -> int | None:
+    """x of a long vertical line in the left 25%, of any colour: the margin line when it is printed
+    too pale for margin_x (on some booklets every other page). Writing never makes a line this long
+    and the ruled lines run across, so they are removed by the vertical opening."""
+    h, w = img.shape[:2]
+    left = img[:, int(w * 0.04): int(w * 0.25)]   # margins sit at 10-20%; tables further right
+    # The pale line breaks up into pieces: keep vertical runs of 8% of the page height or more,
+    # which handwriting doesn't make, and ask that they cover half the page between them.
+    ink = (left.min(axis=2) < 238).astype(np.uint8)
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((int(h * 0.08), 1), np.uint8))
+    # Summed over 5 columns, as a slightly slanted line moves across them.
+    cols = np.convolve(lines.sum(axis=0), np.ones(5), mode="same")
+    # A printed line is a few pixels wide; the scanner's shadow at the page edge is a wide strip.
+    strong = np.concatenate([[0], (cols >= h * 0.5).astype(np.int8), [0]])
+    starts, ends = np.where(np.diff(strong) == 1)[0], np.where(np.diff(strong) == -1)[0]
+    thin = [a + int(np.argmax(cols[a:b])) for a, b in zip(starts, ends) if b - a <= w * 0.012]
+    return int(w * 0.04) + int(thin[0]) if thin else None
+
+
+def find_margin(img: np.ndarray) -> int | None:
+    """x of the margin line of an upright page: by its red colour, else as a long vertical line."""
+    return margin_x(ink_masks(img)[1]) or line_x(img)
+
+
 def right_margin_x(red: np.ndarray) -> int | None:
     """x of a red line down the right 30% of the page: the rough-work column starts there."""
     h, w = red.shape
@@ -51,10 +75,10 @@ def right_margin_x(red: np.ndarray) -> int | None:
     return x0 + int(np.where(cols >= cols.max() * 0.6)[0][0])
 
 
-def find_marks(img: np.ndarray) -> tuple[int, list[tuple[int, int, int, int]]]:
+def find_marks(img: np.ndarray, margin: int | None = None) -> tuple[int, list[tuple[int, int, int, int]]]:
     pen, red = ink_masks(img)
     h, w = pen.shape
-    mx = margin_x(red)
+    mx = margin or find_margin(img)
     if mx is None:
         mx = int(w * 0.12)
     # A label may start in the margin and run a little past the line ("21.(1)").
@@ -82,11 +106,11 @@ def find_marks(img: np.ndarray) -> tuple[int, list[tuple[int, int, int, int]]]:
     return mx, marks
 
 
-def cut_blocks(img: np.ndarray) -> tuple[int, list[Block]]:
+def cut_blocks(img: np.ndarray, margin: int | None = None) -> tuple[int, list[Block]]:
     """Blocks of the page, top to bottom; the first is a continuation if there is ink above the first mark."""
     pen, _ = ink_masks(img)
     h = pen.shape[0]
-    mx, marks = find_marks(img)
+    mx, marks = find_marks(img, margin)
     pad = int(h * 0.012)
     rx = right_margin_x(ink_masks(img)[1]) or pen.shape[1]
     # Cut each page in the gap between lines just above a mark, not at a fixed distance, which

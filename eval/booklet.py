@@ -25,7 +25,7 @@ import numpy as np
 import pypdfium2 as pdfium
 
 from model import MODEL, OLLAMA_URL
-from segment import Block, cut_blocks, ink_masks, margin_x, right_margin_x
+from segment import Block, cut_blocks, find_margin, ink_masks, margin_x, right_margin_x
 
 PDF_DPI = 150
 NUMBER_PROMPT = (
@@ -38,6 +38,8 @@ NUMBER_CONFIDENCE = 0.5
 CIRCLED = {chr(0x2460 + i): f"({i + 1})" for i in range(20)}
 # A handwritten Q is often read as 0 ("016." for "Q16."), so up to three digits, leading zero dropped.
 LABEL = re.compile(r"^\s*(?:Q\.?|A[nmu]s\.?)?\s*(\(?)\s*(\d{1,3})(?:\s*\.\s*(\d))?")
+# "Q.25)" is often read as "8.25", "9.25" or "0.25": a lone 8, 9 or 0 and a dot before the number.
+Q_AS_DIGIT = re.compile(r"^\s*[890]\s*[.,]\s*(\d{1,2})(?!\d)")
 
 
 @dataclass
@@ -133,10 +135,23 @@ def orient(pages: list[np.ndarray]) -> int:
 
 
 def mark_crop(img: np.ndarray, mx: int, b: Block) -> np.ndarray:
+    """The margin mark, with the rest of the number when it runs across the margin line ("Q.9)"
+    written over the line), up to the first gap: the space before the answer."""
     h, w = img.shape[:2]
     _, y0, _, y1 = b.mark
     pad = int(h * 0.015)
-    return img[max(0, y0 - pad): y1 + pad, int(w * 0.01): min(w, mx + int(w * 0.01))]
+    pen, _ = ink_masks(img[y0:y1 + 1])
+    cols = pen.any(axis=0)
+    right, gap, x = mx + int(w * 0.01), 0, mx + 3
+    while x < min(w, mx + int(w * 0.08)):
+        if cols[x]:
+            right, gap = x + 2, 0
+        else:
+            gap += 1
+            if gap > int(w * 0.008):
+                break
+        x += 1
+    return img[max(0, y0 - pad): y1 + pad, int(w * 0.01): min(w, max(right, mx + int(w * 0.01)))]
 
 
 def answer_crop(img: np.ndarray, b: Block) -> np.ndarray:
@@ -144,6 +159,15 @@ def answer_crop(img: np.ndarray, b: Block) -> np.ndarray:
     w = img.shape[1]
     rx = right_margin_x(ink_masks(img)[1])
     return img[max(0, b.top): b.bottom, int(w * 0.01): rx - 2 if rx else int(w * 0.99)]
+
+
+def q_reading(label: str) -> tuple[Optional[str], bool]:
+    """The number if the label's first digit is a misread "Q.": ("25", True) for "8.25", where two
+    digits after the dot can't be a part number; ("1", False) for "8.1", which might be part 8.1."""
+    m = Q_AS_DIGIT.match(label)
+    if not m:
+        return None, False
+    return str(int(m.group(1))), len(m.group(1)) == 2
 
 
 def parse(label: str) -> tuple[Optional[str], bool]:
@@ -168,14 +192,22 @@ def sure(label: str, conf: Optional[float]) -> bool:
 def merge_pairs(blocks: list[Block], reads: list[tuple[str, Optional[float]]], h: int
                 ) -> tuple[list[Block], list[tuple[str, Optional[float]]]]:
     """Join a "Q1." line with the "Ans 1." line under it: two marks a line or two apart that
-    give the same number, or where one reads a number and the other can't be read."""
+    give the same number, or where one reads a number and the other has no digits at all ("Q",
+    "Ans"). An unreadable mark with digits ("?.4)") is a question of its own: MCQs are a line apart."""
+    def number(label: str) -> Optional[str]:
+        alt, certain = q_reading(label)
+        return alt if certain else parse(label)[0]
+
+    def no_digits(label: str) -> bool:
+        return not any(ch.isdigit() for ch in label)
+
     out_b, out_r = [blocks[0]] if blocks else [], [reads[0]] if reads else []
     for b, r in zip(blocks[1:], reads[1:]):
         a, ra = out_b[-1], out_r[-1]
         if a.mark and b.mark and b.mark[1] - a.mark[3] < h * 0.06:
-            na, nb = parse(ra[0])[0], parse(r[0])[0]
+            na, nb = number(ra[0]), number(r[0])
             sa, sb = sure(*ra), sure(*r)
-            if same_number(na, nb) or (sa and not sb and nb in (None, na)) or (sb and not sa and na in (None, nb)):
+            if same_number(na, nb) or (sa and not sb and no_digits(r[0])) or (sb and not sa and no_digits(ra[0])):
                 out_b[-1] = Block(a.top, b.bottom, a.mark)
                 out_r[-1] = max(ra, r, key=lambda x: (sure(*x), x[1] or 0))
                 continue
@@ -205,9 +237,13 @@ def assign(crops: list[Crop]) -> list[Question]:
             continue
         number, bracketed = parse(c.label)
         unsure = not sure(c.label, c.confidence)
-        main = int(number.split(".")[0]) if number else None
         cur = current.number if current else "start"
         cur_main = int(cur.split(".")[0]) if cur not in ("?", "start") else None
+        alt, certain = q_reading(c.label)
+        if alt and (certain or (int(alt) in ((cur_main or 0) + 1, (cur_main or 0) + 2)
+                                and not (number and cur_main and number.split(".")[0] == str(cur_main)))):
+            number = alt                         # "8.25" -> 25; "8.1" -> 1 when 1 comes next
+        main = int(number.split(".")[0]) if number else None
         # "35" read as 3.5: take the number without the dot when that is the next question.
         if number and "." in number and cur_main is not None and main not in (cur_main, cur_main + 1)                 and int(number.replace(".", "")) in (cur_main + 1, cur_main + 2):
             number = number.replace(".", "")
@@ -244,7 +280,10 @@ def assign(crops: list[Crop]) -> list[Question]:
         not_number = c.label.strip() in ("-", "–") and not unsure
         if current is not None and (number is None or (unsure and not plausible)):
             c.kind = "note"                      # a word or sign (=>) in the margin, or unsure
-            if unsure and not not_number:
+            # Flag only a mark that might be a missed question number: it has digits and could
+            # come next. Arrows, (a), (ii) and the 2s of maths working stay quietly with the answer.
+            maybe_next = main is not None and cur_main is not None and cur_main < main <= cur_main + 3
+            if unsure and not not_number and maybe_next:
                 flag = "a mark in the margin could not be read; check this is all one answer"
                 if flag not in current.flags:
                     current.flags.append(flag)
@@ -290,18 +329,25 @@ def process(files: list[Path], out_dir: Path, progress: Callable[[str], None] = 
     for name, pages in loaded:
         progress(f"Turning the pages of {name} upright")
         degrees = orient(pages)
+        # Booklet pages alternate between two layouts (left and right pages): when a page's margin
+        # line is too faint to find, the last page of the same kind tells where it is.
+        last_margin: dict[int, int] = {}
         for img in pages:
             page_no += 1
             img = rotate(img, degrees)
             progress(f"Page {page_no} of {total}: finding the answers")
-            mx_found = margin_x(ink_masks(img)[1])
+            mx_found = find_margin(img)
+            if mx_found is None and page_no % 2 in last_margin and ink_masks(img)[0].sum() > 0:
+                mx_found = last_margin[page_no % 2]
+            if mx_found is not None:
+                last_margin[page_no % 2] = mx_found
             if mx_found is None:
                 skipped.append(page_no)
                 cv2.imwrite(str(crops_dir / f"p{page_no:02d}_page.jpg"), img)
                 crops.append(Crop(page_no, f"p{page_no:02d}_page.jpg", "", None, "continuation"))
                 partial(build_result([Crop(**c.__dict__) for c in crops], total, skipped))
                 continue
-            mx, blocks = cut_blocks(img)
+            mx, blocks = cut_blocks(img, mx_found)
             reads: list[tuple[str, Optional[float]]] = []
             for i, b in enumerate(blocks):
                 if b.mark is None:

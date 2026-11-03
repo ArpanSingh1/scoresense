@@ -60,6 +60,11 @@ class Grouping(unittest.TestCase):
     def test_unsure_unlikely_number_stays_with_its_answer(self):
         qs = assign([crop("22"), crop("2", 0.3), crop("40", 0.3)])   # => arrows in maths working
         self.assertEqual([q.number for q in qs], ["22"])
+        self.assertEqual(qs[0].flags, [])                           # not worth the teacher's time
+
+    def test_unsure_mark_that_could_be_the_next_question_is_flagged(self):
+        qs = assign([crop("22"), crop("25", 0.3)])
+        self.assertEqual([q.number for q in qs], ["22"])
         self.assertTrue(qs[0].flags)
 
     def test_first_number_is_taken_but_flagged_when_unsure(self):
@@ -90,6 +95,12 @@ class Grouping(unittest.TestCase):
         self.assertIn("comes after Q25", qs[-1].flags[0])
         self.assertEqual(assign([crop("13"), crop("14"), crop("15")])[-1].flags, [])
 
+    def test_q_read_as_a_digit(self):                  # "Q.25)" read as 8.25, "Q.1)" as 8.1
+        self.assertEqual(numbers([crop("8.24"), crop("9.25"), crop("0.26")]), ["24", "25", "26"])
+        self.assertEqual(numbers([crop("", None, "continuation"), crop("8.1"), crop("8.2"), crop("9.3")]),
+                         ["start", "1", "2", "3"])
+        self.assertEqual(numbers([crop("34"), crop("34.1"), crop("34.2")]), ["34", "34.1", "34.2"])
+
     def test_sign_in_margin_is_a_note(self):
         qs = assign([crop("22"), crop("-")])
         self.assertEqual(numbers([crop("22"), crop("-")]), ["22"])
@@ -108,6 +119,14 @@ class MergeLines(unittest.TestCase):
 
     def test_different_questions_stay_apart(self):
         blocks, _ = merge_pairs([self.block(100), self.block(150)], [("14", 0.9), ("15", 0.9)], 1200)
+        self.assertEqual(len(blocks), 2)
+
+    def test_unreadable_number_on_the_next_line_is_its_own_question(self):
+        blocks, _ = merge_pairs([self.block(100), self.block(150)], [("8.3", 0.9), ("?.4)", 0.3)], 1200)
+        self.assertEqual(len(blocks), 2)
+
+    def test_q_read_as_digit_keeps_two_digit_numbers_apart(self):
+        blocks, _ = merge_pairs([self.block(100), self.block(150)], [("8.25", 0.9), ("8.26", 0.9)], 1200)
         self.assertEqual(len(blocks), 2)
 
     def test_far_apart_lines_stay_apart(self):
