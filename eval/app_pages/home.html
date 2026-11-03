@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScoreSense Tests</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1c2330; --muted: #5d6675; --line: #dfe3ea;
+    --accent: #2f5bea; --accent-soft: #eaf0ff; --ok: #17803d; --ok-soft: #e7f6ec; --warn: #a15c00; --warn-soft: #fff4e0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  button, input { font: inherit; color: inherit; }
+  header { background: var(--card); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1100px; margin: 0 auto; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+  .brand { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand span { color: var(--accent); }
+  .bar .note { margin-left: auto; color: var(--muted); font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 16px 80px; }
+  .head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+  .head h1 { font-size: 24px; margin: 0; }
+  .btn { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 8px 16px; cursor: pointer; font-weight: 600; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .head .btn { margin-left: auto; }
+  .new { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 20px;
+         display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 12px; align-items: end; }
+  .new label span { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .new input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  a.test { display: block; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
+           color: inherit; text-decoration: none; transition: border-color .15s, box-shadow .15s; }
+  a.test:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(47, 91, 234, .08); }
+  .test h2 { font-size: 18px; margin: 0 0 4px; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tag { background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 8px; font-size: 13px; font-weight: 600; }
+  .tag.plain { background: #f0f2f5; color: var(--muted); font-weight: 500; }
+  .nums { display: flex; gap: 18px; }
+  .nums div { font-size: 13px; color: var(--muted); }
+  .nums b { display: block; font-size: 20px; color: var(--ink); }
+  .bar-wrap { height: 6px; background: #eef0f4; border-radius: 4px; overflow: hidden; margin-top: 14px; }
+  .bar-fill { height: 100%; background: var(--ok); }
+  .empty { background: var(--card); border: 1px dashed var(--line); border-radius: 14px; padding: 40px; text-align: center; color: var(--muted); }
+  .error { color: #b3261e; font-size: 14px; }
+  @media (max-width: 760px) { .new { grid-template-columns: 1fr 1fr; } .new label:first-child { grid-column: 1 / -1; } }
+</style>
+</head>
+<body>
+<header><div class="bar"><div class="brand">Score<span>Sense</span></div><span class="note">Runs on this computer · papers stay here</span></div></header>
+<main>
+  <div class="head"><h1>Tests</h1><button class="btn primary" id="new-btn" type="button">+ New test</button></div>
+  <form class="new" id="new" hidden>
+    <label><span>Test name *</span><input id="t-name" required placeholder="Class 10 Maths Half-yearly"></label>
+    <label><span>Subject</span><input id="t-subject" placeholder="Mathematics"></label>
+    <label><span>Class</span><input id="t-class" placeholder="10 A"></label>
+    <label><span>Date</span><input id="t-date" type="date"></label>
+    <button class="btn primary" type="submit">Create</button>
+    <div class="error" id="new-error"></div>
+  </form>
+  <div class="grid" id="tests"></div>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  function el(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : e.setAttribute(k, v);
+    for (const k of kids) e.append(k);
+    return e;
+  }
+  const fmtDate = d => d ? new Date(d + "T00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+
+  async function load() {
+    const tests = await (await fetch("/api/tests")).json();
+    if (!tests.length) {
+      $("tests").replaceChildren(el("div", { class: "empty" }, "No tests yet. Create one, then upload its question paper and the students' answer sheets."));
+      $("new").hidden = false;
+      return;
+    }
+    $("tests").replaceChildren(...tests.map(t => {
+      const s = t.stats, done = s.uploaded ? s.completed / s.uploaded : 0;
+      return el("a", { class: "test", href: `/test/${t.id}` },
+        el("h2", {}, t.name),
+        el("div", { class: "tags" },
+          ...(t.subject ? [el("span", { class: "tag" }, t.subject)] : []),
+          ...(t.class_name ? [el("span", { class: "tag plain" }, "Class " + t.class_name)] : []),
+          ...(t.date ? [el("span", { class: "tag plain" }, fmtDate(t.date))] : [])),
+        el("div", { class: "nums" },
+          el("div", {}, el("b", {}, String(s.uploaded)), "sheets"),
+          el("div", {}, el("b", {}, `${s.completed}`), "marked"),
+          el("div", {}, el("b", {}, s.average == null ? "–" : s.average + "%"), "average"),
+          el("div", {}, el("b", {}, t.total_marks ? String(t.total_marks) : "–"), "marks")),
+        el("div", { class: "bar-wrap" }, el("div", { class: "bar-fill", style: `width:${Math.round(done * 100)}%` })));
+    }));
+  }
+
+  $("new-btn").onclick = () => { $("new").hidden = !$("new").hidden; if (!$("new").hidden) $("t-name").focus(); };
+  $("new").onsubmit = async e => {
+    e.preventDefault();
+    const res = await fetch("/api/tests", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("t-name").value, subject: $("t-subject").value, class_name: $("t-class").value, date: $("t-date").value }) });
+    const j = await res.json();
+    if (!res.ok) { $("new-error").textContent = j.detail || "Could not create the test."; return; }
+    location.href = `/test/${j.id}`;
+  };
+  load();
+</script>
+</body>
+</html>

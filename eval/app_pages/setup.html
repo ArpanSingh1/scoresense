@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ScoreSense Exam Setup</title>
+<title>ScoreSense Setup</title>
 <style>
   :root {
     --bg: #f6f7f9; --card: #fff; --ink: #1c2330; --muted: #5d6675; --line: #dfe3ea;
@@ -12,16 +12,22 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
-  button, input, textarea, select { font: inherit; color: inherit; }
+  button, input, textarea { font: inherit; color: inherit; }
   header { background: var(--card); border-bottom: 1px solid var(--line); }
-  .bar { max-width: 900px; margin: 0 auto; padding: 12px 16px; display: flex; align-items: center; gap: 16px; }
-  .bar h1 { font-size: 18px; margin: 0; }
-  .bar a { margin-left: auto; color: var(--accent); text-decoration: none; font-weight: 600; }
+  .bar { max-width: 900px; margin: 0 auto; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+  .bar a.back { color: var(--muted); text-decoration: none; font-size: 22px; line-height: 1; }
+  .bar h1 { font-size: 20px; margin: 0; }
+  .bar .saved { margin-left: auto; color: var(--ok); font-size: 14px; }
   main { max-width: 900px; margin: 0 auto; padding: 24px 16px 80px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
   .card h2 { font-size: 17px; margin: 0 0 4px; }
   .muted { color: var(--muted); }
-  label.drop { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 96px; margin-top: 12px;
+  .fields { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .fields label span, .field span { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .fields input, .field textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .field { display: block; margin-top: 12px; }
+  .field textarea { min-height: 56px; resize: vertical; }
+  label.drop { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 90px; margin-top: 12px;
                border: 2px dashed var(--line); border-radius: 12px; cursor: pointer; text-align: center; padding: 16px; }
   label.drop:hover, label.drop.over { border-color: var(--accent); background: var(--accent-soft); }
   input[type=file] { display: none; }
@@ -29,10 +35,6 @@
   .spinner { width: 20px; height: 20px; flex: none; border: 3px solid var(--line); border-top-color: var(--accent);
              border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .field { display: block; margin-top: 12px; }
-  .field span { display: block; font-weight: 600; margin-bottom: 4px; }
-  .field input, .field textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-  .field textarea { min-height: 56px; resize: vertical; }
   .problem { background: var(--warn-soft); border: 1px solid var(--warn-line); color: var(--warn); border-radius: 8px; padding: 8px 12px; margin-top: 12px; }
   .good { background: var(--ok-soft); color: var(--ok); border-radius: 8px; padding: 8px 12px; margin-top: 12px; }
   table { border-collapse: collapse; margin-top: 12px; width: 100%; font-size: 14px; }
@@ -44,44 +46,54 @@
   .opt:hover { border-color: var(--accent); }
   .opt.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
-  .saved { color: var(--ok); font-size: 14px; }
+  .row input { width: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+  @media (max-width: 700px) { .fields { grid-template-columns: 1fr 1fr; } .fields label:first-child { grid-column: 1 / -1; } }
 </style>
 </head>
 <body>
-<header><div class="bar"><h1>Exam setup</h1><a href="/">Back to marking papers</a></div></header>
+<header><div class="bar"><a class="back" id="back" href="#" aria-label="Back to the test">&larr;</a><h1 id="title">Question paper &amp; key</h1><span class="saved" id="saved"></span></div></header>
 <main>
   <section class="card">
-    <h2>1. Upload the question paper</h2>
+    <h2>Test details</h2>
+    <div class="fields">
+      <label><span>Test name</span><input id="name"></label>
+      <label><span>Subject</span><input id="subject"></label>
+      <label><span>Class</span><input id="class_name"></label>
+      <label><span>Date</span><input id="date" type="date"></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>1. Question paper</h2>
     <div class="muted">ScoreSense reads the marks scheme from its general instructions and finds the multiple-choice questions.</div>
-    <form id="form" action="/exam/upload" method="post" enctype="multipart/form-data">
+    <div class="muted" id="paper-name"></div>
+    <form id="form" method="post" enctype="multipart/form-data">
       <label class="drop" id="drop"><b>Click to upload the question paper</b><span class="muted">PDF or photos</span>
         <input id="files" type="file" name="files" accept=".pdf,.png,.jpg,.jpeg" multiple></label>
     </form>
     <div class="status" id="status" hidden><div class="spinner"></div><span id="status-msg"></span></div>
   </section>
 
-  <section class="card" id="setup" hidden>
-    <h2>2. Check the marks</h2>
-    <div class="muted" id="source"></div>
-    <label class="field"><span>Exam name</span><input id="name"></label>
+  <section class="card">
+    <h2>2. Marks</h2>
     <table id="sections" hidden><thead><tr><th>Section</th><th>Questions</th><th>Type</th><th>Marks each</th><th>Marks</th></tr></thead><tbody></tbody></table>
     <div id="problems"></div>
-    <label class="field"><span>Marks scheme</span><textarea id="scheme" spellcheck="false"></textarea></label>
-    <div class="muted">Question numbers and marks for each, like <b>1-20:1, 21-24:2</b>. Change it if anything above is wrong. Total: <b id="sum">0</b> marks.</div>
+    <label class="field"><span>Marks scheme</span><textarea id="scheme" spellcheck="false" placeholder="1-20:1, 21-24:2, 25-29:3"></textarea></label>
+    <div class="muted">Question numbers and marks for each, like <b>1-20:1, 21-24:2</b>; a part can have its own, like <b>34.1:1</b>. Total: <b id="sum">0</b> marks.</div>
   </section>
 
-  <section class="card" id="key-card" hidden>
+  <section class="card">
     <h2>3. Multiple-choice answer key</h2>
     <div class="muted">Click the correct option for each question. Options printed as (a)–(d) or (i)–(iv) are the 1st to 4th: A = (a) = (i).</div>
-    <div class="row"><label>MCQ questions: <input id="mcq" style="width:140px;border:1px solid var(--line);border-radius:8px;padding:4px 8px" placeholder="1-20"></label>
-      <span class="muted" id="key-count"></span><span class="saved" id="saved"></span></div>
+    <div class="row"><label>MCQ questions: <input id="mcq" placeholder="1-20"></label><span class="muted" id="key-count"></span></div>
     <div class="keys" id="keys"></div>
   </section>
 </main>
 <script>
+  const testId = location.pathname.split("/")[2];
   const $ = id => document.getElementById(id);
   const OPTIONS = ["A", "B", "C", "D"];
-  let exam = {}, polling = false;
+  let test = {};
 
   function el(tag, attrs = {}, ...kids) {
     const e = document.createElement(tag);
@@ -95,7 +107,7 @@
     const a = +m[1], b = m[2] ? +m[2] : a;
     return b >= a && b - a < 200 ? Array.from({ length: b - a + 1 }, (_, i) => a + i) : [];
   }))].sort((a, b) => a - b);
-  const listText = ns => {                        // [1,2,3,7] -> "1-3, 7"
+  const listText = ns => {
     const out = [];
     for (let i = 0; i < ns.length; i++) {
       let j = i;
@@ -115,69 +127,72 @@
   }
 
   let saveTimer;
-  function save() {
+  function save(fields) {
     clearTimeout(saveTimer);
     $("saved").textContent = "";
+    Object.assign(pending, fields);
     saveTimer = setTimeout(async () => {
-      await fetch("/api/exam", { method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: $("name").value, scheme: $("scheme").value, mcq: exam.mcq || [], key: exam.key || {} }) });
-      $("saved").textContent = "Saved";
+      const body = pending; pending = {};
+      await fetch(`/api/test/${testId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      $("saved").textContent = "Saved ✓";
     }, 400);
   }
+  let pending = {};
 
   function drawKeys() {
-    exam.key = exam.key || {};
-    $("keys").replaceChildren(...(exam.mcq || []).map(n => {
+    test.key = test.key || {};
+    $("keys").replaceChildren(...(test.mcq || []).map(n => {
       const row = el("div", { class: "krow" }, el("b", {}, "Q" + n));
       for (const o of OPTIONS) {
-        const b = el("button", { class: "opt" + (exam.key[n] === o ? " on" : ""), type: "button", "aria-label": `Q${n} option ${o}` }, o);
-        b.onclick = () => { if (exam.key[n] === o) delete exam.key[n]; else exam.key[n] = o; drawKeys(); save(); };
+        const b = el("button", { class: "opt" + (test.key[n] === o ? " on" : ""), type: "button", "aria-label": `Q${n} option ${o}` }, o);
+        b.onclick = () => { if (test.key[n] === o) delete test.key[n]; else test.key[n] = o; drawKeys(); save({ key: test.key }); };
         row.append(b);
       }
       return row;
     }));
-    const done = (exam.mcq || []).filter(n => exam.key[n]).length;
-    $("key-count").textContent = `${done} of ${(exam.mcq || []).length} answers set`;
+    const done = (test.mcq || []).filter(n => test.key[n]).length;
+    $("key-count").textContent = (test.mcq || []).length ? `${done} of ${test.mcq.length} answers set` : "Type the MCQ question numbers, e.g. 1-20";
   }
 
   function show() {
-    if (!exam.scheme && !(exam.sections || []).length && !exam.name) return;
-    $("setup").hidden = $("key-card").hidden = false;
-    $("source").textContent = exam.question_paper ? `Read from ${exam.question_paper.join(", ")}` +
-      (exam.found_on_page ? `, instructions on page ${exam.found_on_page}.` : ".") : "";
-    $("name").value = exam.name || "";
-    $("scheme").value = exam.scheme || "";
+    document.title = (test.name || "Test") + " setup · ScoreSense";
+    $("back").href = `/test/${testId}`;
+    for (const k of ["name", "subject", "class_name", "date"]) if (document.activeElement !== $(k)) $(k).value = test[k] || "";
+    $("paper-name").textContent = (test.question_paper || []).length ? `Uploaded: ${test.question_paper.join(", ")}` +
+      (test.found_on_page ? ` (instructions found on page ${test.found_on_page})` : "") : "";
+    if (document.activeElement !== $("scheme")) $("scheme").value = test.scheme || "";
     $("sum").textContent = schemeSum($("scheme").value);
-    const secs = exam.sections || [];
+    const secs = test.sections || [];
     $("sections").hidden = !secs.length;
     $("sections").querySelector("tbody").replaceChildren(...secs.map(s => el("tr", {},
       el("td", {}, s.name), el("td", {}, s.first === s.last ? `${s.first}` : `${s.first}–${s.last}`), el("td", {}, s.type),
       el("td", {}, String(s.marks)), el("td", {}, String((s.last - s.first + 1) * s.marks)))));
-    $("problems").replaceChildren(...((exam.problems || []).length
-      ? exam.problems.map(p => el("div", { class: "problem" }, "⚠ " + p))
-      : secs.length ? [el("div", { class: "good" }, `✓ The sections add up to the paper's ${exam.max_marks} marks.`)] : []));
-    $("mcq").value = listText(exam.mcq || []);
+    $("problems").replaceChildren(...((test.problems || []).length
+      ? test.problems.map(p => el("div", { class: "problem" }, "⚠ " + p))
+      : secs.length ? [el("div", { class: "good" }, `✓ The sections add up to the paper's ${test.max_marks} marks.`)] : []));
+    if (document.activeElement !== $("mcq")) $("mcq").value = listText(test.mcq || []);
     drawKeys();
   }
 
   async function poll() {
-    const { job, exam: e } = await (await fetch("/api/exam")).json();
-    const busy = job.status === "queued" || job.status === "working";
+    test = await (await fetch(`/api/test/${testId}`)).json();
+    const job = test.paper_job, busy = job.status === "queued" || job.status === "working";
     $("status").hidden = !busy && job.status !== "failed";
+    $("status").querySelector(".spinner").hidden = !busy;
     $("status-msg").textContent = job.status === "failed" ? "Could not read it: " + job.message : job.message;
-    if (!busy) { exam = e; show(); polling = false; return; }
-    polling = true;
-    setTimeout(poll, 1500);
+    show();
+    if (busy) setTimeout(poll, 1500);
   }
 
+  $("form").action = `/test/${testId}/paper`;
   $("files").onchange = () => { if ($("files").files.length) { $("status").hidden = false; $("status-msg").textContent = "Uploading…"; $("form").submit(); } };
   const drop = $("drop");
   ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", e => { $("files").files = e.dataTransfer.files; $("files").onchange(); });
-  $("name").oninput = save;
-  $("scheme").oninput = () => { $("sum").textContent = schemeSum($("scheme").value); save(); };
-  $("mcq").onchange = () => { exam.mcq = parseList($("mcq").value); $("mcq").value = listText(exam.mcq); drawKeys(); save(); };
+  for (const k of ["name", "subject", "class_name", "date"]) $(k).oninput = () => save({ [k]: $(k).value });
+  $("scheme").oninput = () => { $("sum").textContent = schemeSum($("scheme").value); save({ scheme: $("scheme").value }); };
+  $("mcq").onchange = () => { test.mcq = parseList($("mcq").value); $("mcq").value = listText(test.mcq); drawKeys(); save({ mcq: test.mcq }); };
   poll();
 </script>
 </body>

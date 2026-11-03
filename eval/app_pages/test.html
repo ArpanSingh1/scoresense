@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScoreSense Test</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1c2330; --muted: #5d6675; --line: #dfe3ea;
+    --accent: #2f5bea; --accent-soft: #eaf0ff; --ok: #17803d; --ok-soft: #e7f6ec;
+    --warn: #a15c00; --warn-soft: #fff4e0; --bad: #b3261e; --bad-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  button, input { font: inherit; color: inherit; }
+  header { background: var(--card); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1200px; margin: 0 auto; padding: 14px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .bar a.back { color: var(--muted); text-decoration: none; font-size: 22px; line-height: 1; }
+  .bar h1 { font-size: 22px; margin: 0; }
+  .actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 7px 14px; cursor: pointer; font-weight: 600; text-decoration: none; color: var(--ink); display: inline-block; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 80px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+  .info { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 14px 18px; margin-bottom: 16px; }
+  .info div { font-size: 13px; color: var(--muted); }
+  .info b { display: block; font-size: 15px; color: var(--ink); font-weight: 600; }
+  .info a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  .setup-warn { background: var(--warn-soft); border: 1px solid #f0c27a; color: var(--warn); border-radius: 12px; padding: 10px 16px; margin-bottom: 16px; }
+  .setup-warn a { color: var(--warn); font-weight: 700; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { padding: 14px 18px; }
+  .stat .k { font-size: 13px; color: var(--muted); }
+  .stat .v { font-size: 26px; font-weight: 700; }
+  .stat .s { font-size: 12px; color: var(--muted); }
+  .v.ok { color: var(--ok); } .v.warn { color: var(--warn); }
+  .cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+  .card h2 { font-size: 17px; margin: 0; }
+  .card-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .card-head .sub { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 18px 0; }
+  .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 2px 12px; font-size: 13px; cursor: pointer; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip b { font-weight: 700; margin-left: 4px; }
+  .search { margin: 12px 18px 0; width: calc(100% - 36px); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .list { padding: 10px 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  a.row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: inherit; }
+  a.row:hover { border-color: var(--accent); }
+  .rank { width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: #f0f2f5; color: var(--muted); font-size: 14px; }
+  .rank.top { background: #fff4d6; color: #8a5a00; }
+  .who { flex: 1; min-width: 0; }
+  .who b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .who span { font-size: 13px; color: var(--muted); }
+  .score { text-align: right; font-weight: 700; white-space: nowrap; }
+  .score span { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+  .badge { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
+  .b-completed { background: var(--ok-soft); color: var(--ok); }
+  .b-review { background: var(--warn-soft); color: var(--warn); }
+  .b-working, .b-queued { background: var(--accent-soft); color: var(--accent); }
+  .b-failed { background: var(--bad-soft); color: var(--bad); }
+  .progress-item { padding: 10px 18px; border-bottom: 1px solid var(--line); }
+  .progress-item:last-child { border-bottom: none; }
+  .progress-item .top { display: flex; gap: 8px; align-items: center; }
+  .progress-item .top b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .progress-item .msg { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
+  .track { height: 6px; background: #eef0f4; border-radius: 4px; overflow: hidden; }
+  .fill { height: 100%; background: var(--accent); transition: width .4s; }
+  .q { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); }
+  .q:last-child { border-bottom: none; }
+  .dot { width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; }
+  .dot.good { background: var(--ok-soft); color: var(--ok); } .dot.mid { background: var(--warn-soft); color: var(--warn); }
+  .dot.low { background: var(--bad-soft); color: var(--bad); } .dot.none { background: #f0f2f5; color: var(--muted); }
+  .q .what { flex: 1; }
+  .q .what span { display: block; font-size: 13px; color: var(--muted); }
+  .q .avg { font-weight: 700; white-space: nowrap; }
+  .scroll { max-height: 560px; overflow: auto; }
+  .empty { padding: 24px 18px; color: var(--muted); text-align: center; }
+  dialog { border: none; border-radius: 16px; padding: 0; width: min(520px, 94vw); }
+  dialog::backdrop { background: rgba(10, 14, 22, .5); }
+  .dlg { padding: 20px; }
+  .dlg h3 { margin: 0 0 4px; }
+  .choice { display: block; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-top: 10px; cursor: pointer; }
+  .choice:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .choice b { display: block; }
+  .choice span { font-size: 13px; color: var(--muted); }
+  input[type=file] { display: none; }
+  .dlg .foot { display: flex; justify-content: flex-end; margin-top: 14px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><div class="bar">
+  <a class="back" href="/" aria-label="All tests">&larr;</a>
+  <h1 id="name">Test</h1>
+  <div class="actions">
+    <a class="btn" id="setup-link" href="#">Question paper &amp; key</a>
+    <a class="btn" id="csv-link" href="#">Download results</a>
+    <button class="btn primary" id="upload-btn" type="button">Upload answer sheets</button>
+  </div>
+</div></header>
+<main>
+  <div class="card info" id="info"></div>
+  <div class="setup-warn" id="setup-warn" hidden></div>
+  <div class="stats" id="stats"></div>
+  <div class="cols">
+    <section class="card">
+      <div class="card-head"><h2>Rank list</h2><span class="sub" id="rank-sub"></span></div>
+      <div class="filters" id="filters"></div>
+      <input class="search" id="search" placeholder="Search student" aria-label="Search student">
+      <div class="list" id="ranklist"></div>
+    </section>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <section class="card" id="progress-card">
+        <div class="card-head"><h2>Evaluation progress</h2><span class="sub" id="progress-sub"></span></div>
+        <div class="scroll" id="progress"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Question-wise performance</h2><span class="sub">average of marks given so far</span></div>
+        <div class="scroll" id="questions"></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<dialog id="upload">
+  <form class="dlg" id="upload-form" method="post" enctype="multipart/form-data">
+    <h3>Upload answer sheets</h3>
+    <div class="muted" style="color:var(--muted);font-size:14px">Sheets are read one after another; you can start marking as soon as the first is done.</div>
+    <input type="hidden" name="mode" id="mode" value="each">
+    <input type="file" id="files" name="files" multiple accept=".pdf,.png,.jpg,.jpeg">
+    <label class="choice" data-mode="each"><b>One file per student</b><span>Choose all the PDFs at once (scans of each booklet). The file name becomes the student's name, e.g. <i>Riya Barot.pdf</i>.</span></label>
+    <label class="choice" data-mode="one"><b>Photos of one student's pages</b><span>Choose the page photos of a single student, in page order.</span></label>
+    <div class="foot"><button class="btn" type="button" id="cancel">Cancel</button></div>
+  </form>
+</dialog>
+
+<script>
+  const testId = location.pathname.split("/")[2];
+  const $ = id => document.getElementById(id);
+  const STATUS = { completed: "Marked", review: "Needs marking", working: "Reading", queued: "Queued", failed: "Failed" };
+  let data = null, filter = "all";
+
+  function el(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : e.setAttribute(k, v);
+    for (const k of kids) e.append(k);
+    return e;
+  }
+  const fmt = n => String(Math.round(n * 100) / 100);
+  const fmtDate = d => d ? new Date(d + "T00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "–";
+
+  function renderInfo(t) {
+    document.title = t.name + " · ScoreSense";
+    $("name").textContent = t.name;
+    $("setup-link").href = `/test/${testId}/setup`;
+    $("csv-link").href = `/test/${testId}/results.csv`;
+    const keyed = Object.keys(t.key || {}).length, mcq = (t.mcq || []).length;
+    $("info").replaceChildren(
+      el("div", {}, "Subject", el("b", {}, t.subject || "–")),
+      el("div", {}, "Class", el("b", {}, t.class_name || "–")),
+      el("div", {}, "Date", el("b", {}, fmtDate(t.date))),
+      el("div", {}, "Total marks", el("b", {}, t.total_marks ? fmt(t.total_marks) : "–")),
+      el("div", {}, "MCQ key", el("b", {}, mcq ? `${keyed} of ${mcq} set` : "–")),
+      el("div", {}, "Question paper", el("a", { href: `/test/${testId}/setup` }, (t.question_paper || []).length ? "View / change" : "Upload")));
+    const warn = !t.scheme ? "Set the marks scheme so marks can be totalled and ranked: " :
+                 mcq && keyed < mcq ? "The MCQ answer key is not complete, so those MCQs won't be checked automatically: " : "";
+    $("setup-warn").hidden = !warn;
+    if (warn) $("setup-warn").replaceChildren(warn, el("a", { href: `/test/${testId}/setup` }, "Question paper & key ›"));
+  }
+
+  function renderStats(t) {
+    const s = t.stats;
+    const card = (k, v, sub, cls = "") => el("div", { class: "card stat" }, el("div", { class: "k" }, k), el("div", { class: "v " + cls }, v), el("div", { class: "s" }, sub));
+    $("stats").replaceChildren(
+      card("Answer sheets", String(s.uploaded), `${s.read} read · ${s.uploaded - s.read} waiting`),
+      card("Fully marked", `${s.completed} / ${s.uploaded}`, s.uploaded ? `${Math.round(100 * s.completed / s.uploaded)}% done` : "upload sheets to start", s.completed === s.uploaded && s.uploaded ? "ok" : ""),
+      card("Average score", s.average == null ? "–" : s.average + "%", "of fully marked sheets", "warn"),
+      card("Highest · Lowest", s.highest == null ? "–" : `${s.highest}% · ${s.lowest}%`, "of fully marked sheets"));
+  }
+
+  function renderRanks(t) {
+    const counts = { all: t.sheets.length };
+    for (const s of t.sheets) counts[s.status] = (counts[s.status] || 0) + 1;
+    $("filters").replaceChildren(...["all", "review", "completed", "working", "queued", "failed"].map(f => {
+      const b = el("button", { class: "chip" + (filter === f ? " on" : ""), type: "button" }, f === "all" ? "All" : STATUS[f], el("b", {}, String(counts[f] || 0)));
+      b.onclick = () => { filter = f; renderRanks(data); };
+      return b;
+    }));
+    const q = $("search").value.trim().toLowerCase();
+    const rows = t.sheets.filter(s => (filter === "all" || s.status === filter) && (!q || s.student.toLowerCase().includes(q)))
+      .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || a.student.localeCompare(b.student));
+    $("rank-sub").textContent = `${t.sheets.length} student${t.sheets.length === 1 ? "" : "s"}`;
+    if (!rows.length) {
+      $("ranklist").replaceChildren(el("div", { class: "empty" }, t.sheets.length ? "No students here." : "No answer sheets yet. Click “Upload answer sheets”."));
+      return;
+    }
+    $("ranklist").replaceChildren(...rows.map(s => {
+      const detail = s.status === "review" ? `${s.unmarked} question${s.unmarked === 1 ? "" : "s"} to mark` + (s.to_look ? ` · ${s.to_look} need a look` : "") :
+                     s.status === "completed" ? `${s.questions} questions marked` : s.message || STATUS[s.status];
+      return el("a", { class: "row", href: `/job/${s.id}` },
+        el("div", { class: "rank" + (s.rank && s.rank <= 3 ? " top" : "") }, s.rank ? String(s.rank) : "–"),
+        el("div", { class: "who" }, el("b", {}, s.student), el("span", {}, detail)),
+        el("span", { class: "badge b-" + s.status }, STATUS[s.status]),
+        el("div", { class: "score" }, s.status === "completed" || s.status === "review" ? `${fmt(s.marks)}${t.total_marks ? " / " + fmt(t.total_marks) : ""}` : "",
+           el("span", {}, s.percent != null ? s.percent + "%" : s.status === "review" ? "so far" : "")));
+    }));
+  }
+
+  function renderProgress(t) {
+    const active = t.sheets.filter(s => ["working", "queued", "failed"].includes(s.status));
+    const read = t.stats.read, total = t.sheets.length;
+    $("progress-sub").textContent = total ? `${read} of ${total} read` : "";
+    if (!active.length) {
+      $("progress").replaceChildren(el("div", { class: "empty" }, total ? "All sheets are read. ✓" : "Nothing uploaded yet."));
+      return;
+    }
+    $("progress").replaceChildren(...active.map(s => el("div", { class: "progress-item" },
+      el("div", { class: "top" }, el("b", {}, s.student), el("span", { class: "badge b-" + s.status }, STATUS[s.status])),
+      el("div", { class: "msg" }, s.message || ""),
+      el("div", { class: "track" }, el("div", { class: "fill", style: `width:${Math.round((s.progress || 0) * 100)}%` })))));
+  }
+
+  function renderQuestions(t) {
+    if (!t.questions.length) {
+      $("questions").replaceChildren(el("div", { class: "empty" }, "Set the marks scheme to see every question here."));
+      return;
+    }
+    $("questions").replaceChildren(...t.questions.map(q => {
+      const acc = q.accuracy, cls = acc == null ? "none" : acc >= 70 ? "good" : acc >= 40 ? "mid" : "low";
+      const sub = [`${q.attempted} of ${t.stats.read} answered`];
+      if (acc != null) sub.push(`accuracy ${acc}%`);
+      if (q.to_look) sub.push(`${q.to_look} need a look`);
+      return el("div", { class: "q" },
+        el("div", { class: "dot " + cls }, q.number.length > 3 ? "Q" : q.number),
+        el("div", { class: "what" }, "Question " + q.number, el("span", {}, sub.join(" · "))),
+        el("div", { class: "avg" }, q.average == null ? "–" : fmt(q.average), q.out_of ? ` / ${fmt(q.out_of)}` : ""));
+    }));
+  }
+
+  async function load() {
+    try { data = await (await fetch(`/api/test/${testId}`)).json(); } catch { setTimeout(load, 4000); return; }
+    renderInfo(data); renderStats(data); renderRanks(data); renderProgress(data); renderQuestions(data);
+    const busy = data.sheets.some(s => s.status === "working" || s.status === "queued");
+    setTimeout(load, busy ? 2500 : 15000);
+  }
+
+  $("search").oninput = () => data && renderRanks(data);
+  $("upload-btn").onclick = () => $("upload").showModal();
+  $("cancel").onclick = () => $("upload").close();
+  document.querySelectorAll(".choice").forEach(c => c.onclick = () => { $("mode").value = c.dataset.mode; $("files").click(); });
+  $("files").onchange = () => {
+    if (!$("files").files.length) return;
+    $("upload-form").action = `/test/${testId}/sheets`;
+    $("upload-form").querySelector("h3").textContent = `Uploading ${$("files").files.length} file(s)…`;
+    $("upload-form").submit();
+  };
+  load();
+</script>
+</body>
+</html>

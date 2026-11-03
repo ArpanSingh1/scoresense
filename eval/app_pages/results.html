@@ -18,6 +18,7 @@
   .bar { max-width: 1100px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; }
   .bar h1 { font-size: 18px; margin: 0; }
   .bar a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .bar a.back { color: var(--muted); font-size: 22px; line-height: 1; font-weight: 400; }
   .student { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; width: 200px; }
   .total { margin-left: auto; font-size: 16px; }
   .total b { font-size: 20px; }
@@ -51,6 +52,14 @@
   .q-head { display: flex; align-items: center; gap: 10px 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .q-head h2 { margin: 0; font-size: 20px; }
   .q-head .pages { color: var(--muted); font-size: 14px; }
+  .mcq { padding: 8px 16px; font-size: 14px; border-bottom: 1px solid var(--line); display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: baseline; }
+  .mcq.right { background: var(--ok-soft); }
+  .mcq.wrong { background: #fdecea; }
+  .mcq.review { background: var(--warn-soft); }
+  .mcq .v { font-weight: 700; }
+  .mcq.right .v { color: var(--ok); } .mcq.wrong .v { color: #b3261e; } .mcq.review .v { color: var(--warn); }
+  .marker .auto { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; }
+  .checkbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--accent-soft); border: 1px solid #c9d6fb; border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
   .key { background: var(--ok-soft); color: var(--ok); border-radius: 6px; padding: 1px 8px; font-weight: 600; font-size: 14px; }
   .marker { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .marker .m { min-width: 36px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); cursor: pointer; font-weight: 600; }
@@ -74,11 +83,11 @@
 </head>
 <body>
 <header><div class="bar">
-  <h1>Answers by question</h1>
+  <a class="back" id="back" href="/" aria-label="Back to the test">&larr;</a>
+  <h1 id="test-name">Answers by question</h1>
   <input class="student" id="student" placeholder="Student name or roll no." aria-label="Student name or roll number">
   <span class="total" id="total"></span>
   <button class="btn primary" id="download" type="button">Download marks</button>
-  <a href="/">Upload another paper</a>
 </div></header>
 <main>
   <div class="progress" id="progress">
@@ -91,6 +100,8 @@
     <div class="muted">Marks per question, e.g. <b>1-20:1, 21-25:2, 26-31:3, 32-35:5, 36-38:4</b>. A part can have its own: <b>34.1:1</b>. It is remembered for the next paper.</div>
   </details>
   <div id="out" hidden>
+    <div class="checkbar" id="checkbar" hidden><span>An answer key is set for this exam.</span>
+      <button class="btn primary" id="check-btn" type="button">Check MCQs with the answer key</button></div>
     <div class="summary" id="summary"></div>
     <div class="jump" id="jump"></div>
     <div class="keys">Keyboard: <kbd>0</kbd>–<kbd>9</kbd> gives that mark and moves on, <kbd>H</kbd> adds a half, <kbd>Enter</kbd> next, <kbd>Backspace</kbd> clears.</div>
@@ -104,6 +115,9 @@
   const KIND = { question: "", point: "numbered point", continuation: "continued", note: "margin note" };
   let result = null, scheme = {}, marks = {}, active = null;   // marks: question index -> number
   let key = {};                                                  // MCQ answer key from Exam setup: "1" -> "B"
+  let by = {};                                                   // question index -> "model" or "teacher"
+  let jobDone = false;
+  const needsLook = q => q.flags.length > 0 || (q.mcq && q.mcq.verdict !== "right");
 
   function el(tag, attrs = {}, ...kids) {
     const e = document.createElement(tag);
@@ -147,7 +161,7 @@
       el("span", { class: "muted" }, left ? ` · ${left} left` : " · all marked"));
     for (const [q, i] of qs) {
       const chip = document.querySelector(`.chip[data-i="${i}"]`);
-      if (chip) chip.classList.toggle("done", marks[i] != null && !q.flags.length);
+      if (chip) chip.classList.toggle("done", marks[i] != null && !needsLook(q));
     }
   }
 
@@ -157,7 +171,7 @@
     saveTimer = setTimeout(() => fetch(`/api/job/${jobId}/marks`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scheme: $("scheme").value, student: $("student").value,
-        marks: Object.fromEntries(markables().map(([q, i]) => [i, { number: q.number, mark: marks[i] ?? null, out_of: outOf(q.number) }])) })
+        marks: Object.fromEntries(markables().map(([q, i]) => [i, { number: q.number, mark: marks[i] ?? null, out_of: outOf(q.number), by: by[i] || "teacher" }])) })
     }), 400);
   }
 
@@ -165,6 +179,7 @@
     const o = outOf(result.questions[i].number);
     if (value != null && (Number.isNaN(value) || value < 0 || (o != null && value > o))) return false;
     if (value == null) delete marks[i]; else marks[i] = value;
+    by[i] = "teacher";
     drawMarker(i);
     updateTotal();
     save();
@@ -190,6 +205,7 @@
     input.onchange = () => { if (!setMark(i, input.value === "" ? null : parseFloat(input.value))) input.value = v == null ? "" : fmt(v); };
     input.onkeydown = e => e.stopPropagation();
     kids.push(input, el("span", { class: "of" }, o != null ? `/ ${fmt(o)}` : "/ ?"), el("span", { class: "tick" }, v != null ? "✓" : ""));
+    if (v != null && by[i] === "model") kids.push(el("span", { class: "auto", title: "Suggested from the answer key; change it if needed" }, "auto"));
     box.replaceChildren(...kids);
   }
 
@@ -208,10 +224,33 @@
     if (target != null) activate(target, true);
   }
 
+  function mcqLine(m) {
+    const verdict = { right: "✓ Right", wrong: "✗ Wrong: please check", review: "Teacher to check" }[m.verdict];
+    const bits = [el("span", { class: "v" }, verdict),
+      el("span", {}, "Student wrote: ", el("b", {}, m.option || "?")),
+      el("span", {}, "Key: ", el("b", {}, m.key))];
+    if (m.verdict !== "right" && m.reasons.length) bits.push(el("span", {}, "(" + m.reasons.join("; ") + ")"));
+    if (m.read) bits.push(el("span", { class: "muted" }, "Read as: “" + m.read.slice(0, 80) + "”"));
+    return el("div", { class: "mcq " + m.verdict }, ...bits);
+  }
+
+  // Marks the model can suggest: right -> full marks, wrong -> 0. Never over a teacher's mark.
+  function autofill() {
+    let changed = false;
+    for (const [q, i] of markables()) {
+      if (!q.mcq || q.mcq.verdict === "review" || by[i] === "teacher") continue;
+      const o = outOf(q.number);
+      if (o == null) continue;
+      const want = q.mcq.verdict === "right" ? o : 0;
+      if (marks[i] !== want) { marks[i] = want; by[i] = "model"; changed = true; }
+    }
+    if (changed) save();
+  }
+
   function render(r) {
     result = r;
     const qs = r.questions.map((q, i) => [q, i]).filter(([q]) => q.number !== "start" || q.crops.length);
-    const flagged = qs.filter(([q]) => q.flags.length);
+    const flagged = qs.filter(([q]) => needsLook(q));
     const numbered = qs.filter(([q]) => !["?", "start"].includes(q.number));
     $("summary").replaceChildren(
       el("div", { class: "stat" }, el("b", {}, String(r.pages)), "pages"),
@@ -221,22 +260,23 @@
     const only = el("input", { type: "checkbox", id: "only" });
     $("jump").replaceChildren(el("span", { class: "muted" }, "Go to:"),
       ...qs.filter(([q]) => markable(q)).map(([q, i]) => {
-        const b = el("button", { class: "chip" + (q.flags.length ? " warn" : ""), type: "button", "data-i": String(i) }, "Q" + q.number);
+        const b = el("button", { class: "chip" + (needsLook(q) ? " warn" : ""), type: "button", "data-i": String(i) }, "Q" + q.number);
         b.onclick = () => activate(i, true);
         return b;
       }),
       el("label", { class: "toggle" }, only, "Only ones that need a look"));
-    only.onchange = () => qs.forEach(([q, i]) => $("q" + i).hidden = only.checked && !q.flags.length);
+    only.onchange = () => qs.forEach(([q, i]) => $("q" + i).hidden = only.checked && !needsLook(q));
 
     $("list").replaceChildren(...qs.map(([q, i]) => {
       const pages = [...new Set(q.crops.map(c => c.page))];
-      const card = el("section", { class: "q" + (q.flags.length ? " flagged" : ""), id: "q" + i },
+      const card = el("section", { class: "q" + (needsLook(q) ? " flagged" : ""), id: "q" + i },
         el("div", { class: "q-head" },
            el("h2", {}, q.number === "start" ? "Before the first question" : q.number === "?" ? "Question ?" : "Q" + q.number),
            el("span", { class: "pages" }, (pages.length > 1 ? "pages " : "page ") + pages.join(", ")),
            ...(key[q.number] ? [el("span", { class: "key" }, "Key: " + key[q.number])] : []),
            ...(markable(q) ? [el("div", { class: "marker" })] : [])),
-        ...q.flags.map(f => el("div", { class: "flag" }, "⚠ " + f)));
+        ...q.flags.map(f => el("div", { class: "flag" }, "⚠ " + f)),
+        ...(q.mcq ? [mcqLine(q.mcq)] : []));
       if (markable(q)) card.onclick = () => activate(i);
       for (const c of q.crops) {
         const img = el("img", { src: `/job/${jobId}/crops/${c.file}`, alt: `Answer crop, page ${c.page}`, loading: "lazy" });
@@ -248,7 +288,9 @@
       }
       return card;
     }));
+    autofill();
     qs.forEach(([, i]) => drawMarker(i));
+    $("checkbar").hidden = !(jobDone && Object.keys(key).length && !r.mcq_checked);
     if (active != null) activate(active);
     updateTotal();
     $("out").hidden = false;
@@ -267,7 +309,7 @@
     await fetch(`/api/job/${jobId}/marks`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scheme: $("scheme").value, student: $("student").value,
-        marks: Object.fromEntries(markables().map(([q, i]) => [i, { number: q.number, mark: marks[i] ?? null, out_of: outOf(q.number) }])) })
+        marks: Object.fromEntries(markables().map(([q, i]) => [i, { number: q.number, mark: marks[i] ?? null, out_of: outOf(q.number), by: by[i] || "teacher" }])) })
     });
     location.href = `/job/${jobId}/marks.csv`;
   };
@@ -294,7 +336,9 @@
     catch { $("msg").textContent = "Lost contact with ScoreSense. Is it still running?"; setTimeout(poll, 3000); return; }
     if (j.files.length) $("files")?.replaceChildren(j.files.join(", "));
     if (j.result) show(j.result);
-    if (j.status === "done") { $("progress").hidden = true; return; }
+    jobDone = j.status === "done";
+    if (jobDone) { $("progress").hidden = true; if (j.result) render(j.result); return; }
+    $("progress").hidden = false;
     if (j.status === "failed") {
       $("progress").querySelector(".spinner")?.remove();
       $("msg").className = "error";
@@ -307,16 +351,32 @@
   }
 
   (async () => {
+    let test = {};
+    try {
+      test = (await (await fetch(`/api/job/${jobId}`)).json()).test || {};
+      key = test.key || {};
+      if (test.id) {
+        $("back").href = `/test/${test.id}`;
+        $("test-name").textContent = test.name;
+        document.title = test.name + " · ScoreSense";
+      }
+    } catch {}
     try {
       const saved = await (await fetch(`/api/job/${jobId}/marks`)).json();
-      $("scheme").value = saved.scheme || "";
+      $("scheme").value = saved.scheme || test.scheme || "";
       $("student").value = saved.student || "";
-      for (const [i, m] of Object.entries(saved.marks || {})) if (m.mark != null) marks[i] = m.mark;
+      for (const [i, m] of Object.entries(saved.marks || {})) if (m.mark != null) { marks[i] = m.mark; by[i] = m.by || "teacher"; }
     } catch {}
-    try { key = (await (await fetch("/api/exam")).json()).exam.key || {}; } catch {}
     applyScheme();
     if (!$("scheme").value) $("scheme-box").open = true;
     $("zoom").onclick = () => $("zoom").close();
+    $("check-btn").onclick = async () => {
+      $("checkbar").hidden = true;
+      const res = await fetch(`/api/job/${jobId}/check-mcq`, { method: "POST" });
+      if (!res.ok) { alert((await res.json()).detail || "Could not start the check."); return; }
+      $("progress").hidden = false; $("msg").textContent = "Checking multiple-choice answers…";
+      poll();
+    };
     poll();
   })();
 </script>

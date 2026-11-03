@@ -43,16 +43,21 @@ On the reference machine (RTX 3050 6 GB, 16 GB RAM), a 24-page booklet takes abo
 
 ## Using it
 
-1. **Set up the exam (once per exam).** On the home page, click **Set up exam** and upload the question paper.
+1. **Create a test.** On the home page, click **+ New test** and give its name, subject, class and date.
+2. **Add the question paper and key.** On the test page, click **Question paper & key** and upload the question paper.
    - Check the sections and marks. A green tick means they add up to the paper's maximum marks.
    - Click the correct option (A–D) for each multiple-choice question.
-2. **Upload a student's answer booklet.** Click the upload box and choose the PDF or photos, with photos in page order. Answers appear page by page while the rest is read.
-3. **Mark it.**
-   - Type the student's name or roll number.
-   - Give each question its marks with the buttons, or type a mark.
+3. **Upload the answer sheets.** Click **Upload answer sheets** and either:
+   - choose all the students' PDFs at once (one PDF per student, with the file name as the student's name), or
+   - choose the page photos of one student.
+
+   Sheets are read one after another. **Evaluation progress** shows each one, and they are also checked against the MCQ key.
+4. **Mark.** Open a student from the **Rank list**.
+   - MCQs that match the key or clearly don't are already marked; the rest are orange.
+   - Give each remaining question its marks with the buttons, or type a mark.
    - Keyboard: `0`–`9` gives that mark and moves on, `H` adds half a mark, `Backspace` clears.
-   - Look at the orange **need a look** questions first.
-4. Click **Download marks** to get the CSV.
+5. **See the results.** The test page shows the rank list (filter by Needs marking, Marked, Reading, Queued, Failed), the average, highest and lowest scores, and **question-wise performance**: how many answered each question, the average marks and the accuracy.
+6. Click **Download results** for a class CSV with marks per question, total, percentage and rank.
 
 ## Where the data is kept
 
@@ -97,4 +102,4 @@ api/, core/, engines/, main.py  earlier experiments with other OCR engines (sepa
 - **Covered numbers:** a question number hidden under correction fluid leaves no mark on the scan. That answer stays inside the crop of the answer above it.
 - **Booklet layout:** booklets need a red or pink margin line on the left. Pages without one (maps, diagrams) are shown whole.
 - **Marking is the teacher's:** marks are not given automatically yet. Automatic MCQ checking against the answer key is the next step. Long answers need a stronger model than the local one to suggest marks.
-- **One exam at a time:** setting up a new exam replaces the previous one.
+- **Long answers:** marks for long answers are given by the teacher. Grading them against marking points is being tested.
