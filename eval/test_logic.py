@@ -9,7 +9,7 @@ import unittest
 from app import needs_look, out_of, parse_scheme
 from booklet import Crop, assign, merge_pairs, parse, same_number
 from grade import suggest
-from mcq import only_number, strip_number
+from mcq import label_confidence, only_number, strip_number
 from points import evidence_found
 from qpaper import check, scheme_text
 from segment import Block
@@ -101,6 +101,26 @@ class Grouping(unittest.TestCase):
                          ["start", "1", "2", "3"])
         self.assertEqual(numbers([crop("34"), crop("34.1"), crop("34.2")]), ["34", "34.1", "34.2"])
 
+    def test_q_read_as_a_digit_without_the_dot(self):  # "Q.29)" read as 829
+        self.assertEqual(numbers([crop("8.28"), crop("829", 0.3), crop("8.30")]), ["28", "29", "30"])
+
+    def test_old_number_inside_a_later_answer_is_a_sub_part(self):   # "(b)" read as 6, "ii)" as 11
+        qs = assign([crop(str(n)) for n in range(1, 27)] + [crop("6"), crop("27"), crop("11"), crop("28")])
+        self.assertEqual([q.number for q in qs][-3:], ["26", "27", "28"])
+        self.assertFalse(any(q.flags for q in qs))
+
+    def test_a_year_is_not_a_question(self):
+        self.assertIsNone(parse("2025")[0])
+
+    def test_unreadable_number_between_two_takes_the_gap(self):
+        qs = assign([crop("8.1"), crop("?.", 0.3), crop("8.3")])         # Q2 read as "?."
+        self.assertEqual([q.number for q in qs], ["1", "2", "3"])
+        self.assertIn("from the order", qs[1].flags[0])
+
+    def test_question_mark_without_a_gap_stays_a_note(self):
+        qs = assign([crop("22"), crop("?", 0.3), crop("23")])
+        self.assertEqual([q.number for q in qs], ["22", "23"])
+
     def test_sign_in_margin_is_a_note(self):
         qs = assign([crop("22"), crop("-")])
         self.assertEqual(numbers([crop("22"), crop("-")]), ["22"])
@@ -121,6 +141,10 @@ class MergeLines(unittest.TestCase):
         blocks, _ = merge_pairs([self.block(100), self.block(150)], [("14", 0.9), ("15", 0.9)], 1200)
         self.assertEqual(len(blocks), 2)
 
+    def test_bare_question_mark_is_not_joined(self):
+        blocks, _ = merge_pairs([self.block(100), self.block(150)], [("8.1", 0.9), ("?.", 0.3)], 1200)
+        self.assertEqual(len(blocks), 2)
+
     def test_unreadable_number_on_the_next_line_is_its_own_question(self):
         blocks, _ = merge_pairs([self.block(100), self.block(150)], [("8.3", 0.9), ("?.4)", 0.3)], 1200)
         self.assertEqual(len(blocks), 2)
@@ -134,15 +158,61 @@ class MergeLines(unittest.TestCase):
         self.assertEqual(len(blocks), 2)
 
 
+class MarkingScheme(unittest.TestCase):
+    TEXT = """General Instructions:
+1. You are aware that evaluation is the most important process
+2. Evaluation policy is a confidential policy
+Section A
+19 (A) Chancellor Duke Metternich 10 H 1
+20 (C) Buddhism 54 H 1
+Section B
+21 Why was the Indian subcontinent central to the flow of the trading network? Explain.
+(i) The silk routes are a good example of vibrant pre-modern trade and cultural links. 54 H 2X1=2
+(ii) It connected Europe and Africa in the west and China in the east.
+(iii) Any other relevant point.
+Any two points to be explained.
+22 (a) "Minerals occur in igneous rocks." Explain.
+(i) Minerals may occur in the cracks, crevices, faults or joints.
+(ii) Any other relevant point.
+Any two points to be explained. 43 G 2X1=2
+OR
+(b) "The ocean water contains minerals." Explain.
+(i) Common salt, magnesium and bromine are largely derived from ocean water.
+23.1 Which language? 1
+(i) English"""
+
+    def test_key_points_and_marks(self):
+        from unittest import mock
+        from rubric import marks_scheme, scheme_from_text
+        with mock.patch("rubric.chat") as chat:
+            r = scheme_from_text(self.TEXT, None, progress=lambda m: None)
+            chat.assert_not_called()                           # everything here has (i), (ii) items
+        self.assertEqual(r["key"], {"19": "A", "20": "C"})   # the numbered instructions are not questions
+        self.assertEqual(r["points"]["21"], {"points": [
+            "The silk routes are a good example of vibrant pre-modern trade and cultural links.",
+            "It connected Europe and Africa in the west and China in the east."], "needed": 2})
+        self.assertEqual(len(r["points"]["22"]["points"]), 2)   # both alternatives of the OR
+        self.assertEqual(r["points"]["23.1"]["points"], ["English"])
+        self.assertEqual(marks_scheme({**r["marks"], "23.1": 1}), "19-20:1, 21-22:2, 23.1:1")
+
+
 class McqText(unittest.TestCase):
     def test_question_number_is_removed(self):
         self.assertEqual(strip_number("Q1. Ans 1. (C) 1:4"), "(C) 1:4")
         self.assertEqual(strip_number("02.\nAns 2. (D) Sphere"), "(D) Sphere")
         self.assertEqual(strip_number("13. B) Garhwali").strip(), "B) Garhwali")
+        self.assertEqual(strip_number("Q.11) CD) Auxins"), "(D) Auxins")
 
     def test_answer_text_is_kept(self):
         self.assertEqual(strip_number("Both (A) and (R) are true"), "Both (A) and (R) are true")
         self.assertEqual(strip_number("2x + 3 = 5"), "2x + 3 = 5")
+
+    def test_letter_is_weighed_against_other_letters(self):
+        import math
+        tokens, alts = [("(D", math.log(0.2))], [[("(D", math.log(0.2)), ("Q", math.log(0.15)), ("9", math.log(0.13))]]
+        self.assertEqual(label_confidence(tokens, "D", alts), 1.0)          # unsure whether to copy "Q.7)"
+        alts = [[("(D", math.log(0.2)), ("(B", math.log(0.2))]]
+        self.assertEqual(label_confidence(tokens, "D", alts), 0.5)          # D or B: unclear
 
     def test_only_a_number(self):
         self.assertTrue(only_number("015"))

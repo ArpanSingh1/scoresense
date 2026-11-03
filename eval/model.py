@@ -61,6 +61,7 @@ class Answer(TypedDict):
     option: Optional[str]             # multiple choice only: the label, None when not trustworthy
     review_reasons: list[str]
     tokens: list[tuple[str, float]]   # (token, logprob) as the model wrote them, for finer confidence
+    alts: list[list[tuple[str, float]]]   # the top alternatives at each token
 
 
 def check_option(text: str, options: tuple[str, ...]) -> tuple[str, Optional[str], list[str]]:
@@ -88,6 +89,7 @@ def read_answer(image_path: str, question_id: str,
         "messages": [{"role": "user", "content": PROMPT, "images": [image_b64]}],
         "stream": False,
         "logprobs": True,
+        "top_logprobs": 5,
         "options": {"temperature": 0},
     }
     req = urllib.request.Request(
@@ -99,7 +101,10 @@ def read_answer(image_path: str, question_id: str,
         data = json.load(resp)
 
     text = data["message"]["content"].strip().translate(ROMAN_NUMERALS)
-    tokens = [(t.get("token", ""), t["logprob"]) for t in data.get("logprobs") or [] if t.get("logprob") is not None]
+    kept = [t for t in data.get("logprobs") or [] if t.get("logprob") is not None]
+    tokens = [(t.get("token", ""), t["logprob"]) for t in kept]
+    # What else the model weighed at each token: an MCQ letter is only in doubt against other letters.
+    alts = [[(a.get("token", ""), a["logprob"]) for a in t.get("top_logprobs") or []] for t in kept]
     logprobs = [lp for _, lp in tokens]
     confidence = math.exp(min(logprobs)) if logprobs else None
     confidence_mean = math.exp(sum(logprobs) / len(logprobs)) if logprobs else None
@@ -114,4 +119,5 @@ def read_answer(image_path: str, question_id: str,
         text, option, option_reasons = check_option(text, options)
         reasons += option_reasons
     return {"text": text, "confidence": confidence, "confidence_mean": confidence_mean,
-            "needs_review": bool(reasons), "option": option, "review_reasons": reasons, "tokens": tokens}
+            "needs_review": bool(reasons), "option": option, "review_reasons": reasons, "tokens": tokens,
+            "alts": alts}

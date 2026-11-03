@@ -36,6 +36,7 @@ from booklet import process
 from grade import grade
 from mcq import check as check_mcq
 from qpaper import read_scheme
+from rubric import is_marking_scheme, make_rubric, marks_scheme, read_marking_scheme, read_questions
 
 PORT = 8000
 JOBS_DIR = Path(os.environ.get("SCORESENSE_DATA") or
@@ -160,13 +161,45 @@ def do_sheet(sheet_id: str, files: list[Path]) -> None:
 
 
 def do_paper(test_id: str, files: list[Path]) -> None:
+    """A question paper: the marks scheme from its instructions, then a rubric the model writes. An official
+    marking scheme: the key, points and marks copied from it, which replace what the model wrote."""
     pj = paper_jobs[test_id]
-    found = read_scheme(files, progress=lambda m: pj.__setitem__("message", m))
+    say = lambda m: pj.__setitem__("message", m)
+    say("Looking at the upload")
+    if is_marking_scheme(files):
+        made = read_marking_scheme(files, None, progress=say)
+        with lock:
+            test = load_test(test_id)
+            official = {*made["key"], *made["points"]}
+            test.update(key={**test.get("key", {}), **made["key"]}, points={**test.get("points", {}), **made["points"]},
+                        mcq=sorted(int(n) for n in made["key"]) or test.get("mcq", []),
+                        scheme=test.get("scheme") or marks_scheme(made["marks"]),
+                        marking_scheme=[f.name[9:] for f in files],
+                        by_ai=[n for n in test.get("by_ai", []) if n not in official])
+            save_test(test)
+        return
+    found = read_scheme(files, progress=say)
     with lock:
         test = load_test(test_id)
         keep = {k: v for k, v in test.get("key", {}).items() if int(k) in found["mcq"]}
         test.update({k: found[k] for k in ("sections", "scheme", "mcq", "max_marks", "problems", "found_on_page")},
                     key=keep, question_paper=[f.name[9:] for f in files])
+        save_test(test)
+    if not found["scheme"]:
+        return
+    # Then the rubric: the questions, the MCQ key and the marking points. What the teacher has
+    # already written is kept; what the model writes is marked, for the teacher to check.
+    questions = read_questions(files, progress=lambda m: pj.__setitem__("message", m))
+    made = make_rubric(questions, parse_scheme(found["scheme"]), found["mcq"], test.get("subject", ""),
+                       progress=lambda m: pj.__setitem__("message", m))
+    with lock:
+        test = load_test(test_id)
+        key, points = test.get("key", {}), test.get("points", {})
+        new_key = {n: v for n, v in made["key"].items() if n not in key}
+        new_points = {n: v for n, v in made["points"].items() if not points.get(n, {}).get("points")}
+        test.update(key={**key, **new_key}, points={**points, **new_points},
+                    question_text={n: q["text"] for n, q in questions.items()},
+                    by_ai=sorted({*new_key, *new_points}, key=float))
         save_test(test)
 
 
@@ -461,6 +494,8 @@ def edit_test(test_id: str, data: dict = Body(...)):
                 str(n)[:20]: {"points": [str(p).strip()[:500] for p in v.get("points", []) if str(p).strip()][:20],
                               "needed": int(v["needed"]) if str(v.get("needed") or "").isdigit() else None}
                 for n, v in dict(data["points"]).items()}
+        if data.get("checked"):                 # the teacher has gone through the rubric the model wrote
+            test["by_ai"] = []
         save_test(test)
     return {"ok": True}
 

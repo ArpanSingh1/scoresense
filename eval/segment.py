@@ -41,11 +41,21 @@ def margin_x(red: np.ndarray) -> int | None:
     return int(np.where(cols >= cols.max() * 0.6)[0][0])
 
 
+def ruled(img: np.ndarray) -> bool:
+    """True for a ruled answer page: at least 10 light-blue lines across the page."""
+    b, g, r = (img[..., i].astype(int) for i in range(3))
+    light_blue = (b - r > 15) & ((b + g + r) // 3 > 120)
+    rows = light_blue[:, img.shape[1] // 3: img.shape[1] * 2 // 3].mean(axis=1) > 0.25
+    return int((np.diff(rows.astype(np.int8)) == 1).sum()) >= 10
+
+
 def line_x(img: np.ndarray) -> int | None:
     """x of a long vertical line in the left 25%, of any colour: the margin line when it is printed
     too pale for margin_x (on some booklets every other page). Writing never makes a line this long
     and the ruled lines run across, so they are removed by the vertical opening."""
     h, w = img.shape[:2]
+    if not ruled(img):                            # a cover page: its big letters are not a margin
+        return None
     left = img[:, int(w * 0.04): int(w * 0.25)]   # margins sit at 10-20%; tables further right
     # The pale line breaks up into pieces: keep vertical runs of 8% of the page height or more,
     # which handwriting doesn't make, and ask that they cover half the page between them.

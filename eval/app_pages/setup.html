@@ -56,6 +56,12 @@
   .pq-body textarea { width: 100%; min-height: 90px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; }
   .pq-body .need { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 14px; color: var(--muted); }
   .pq-body .need input { width: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+  .ai { display: inline-block; font-size: 11px; font-weight: 700; color: var(--warn); background: var(--warn-soft);
+        border: 1px solid var(--warn-line); border-radius: 6px; padding: 0 5px; line-height: 18px; }
+  .ai-note { background: var(--warn-soft); border-color: var(--warn-line); }
+  .ai-note div { margin: 4px 0 12px; }
+  .ai-note button { border: 0; border-radius: 8px; padding: 8px 14px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  .qtext { white-space: pre-wrap; color: var(--muted); font-size: 14px; margin-bottom: 8px; max-height: 160px; overflow: auto; }
   @media (max-width: 700px) { .fields { grid-template-columns: 1fr 1fr; } .fields label:first-child { grid-column: 1 / -1; } }
 </style>
 </head>
@@ -74,13 +80,20 @@
 
   <section class="card">
     <h2>1. Question paper</h2>
-    <div class="muted">ScoreSense reads the marks scheme from its general instructions and finds the multiple-choice questions.</div>
+    <div class="muted">Upload the <b>question paper</b>: ScoreSense reads the marks scheme and every question, then writes the rubric (the multiple-choice answer key and the marking points of each written answer) for you to check below.
+      Or upload the <b>official marking scheme</b> (for example CBSE's): its answers, value points and marks are copied as printed, which is more reliable.</div>
     <div class="muted" id="paper-name"></div>
     <form id="form" method="post" enctype="multipart/form-data">
-      <label class="drop" id="drop"><b>Click to upload the question paper</b><span class="muted">PDF or photos</span>
+      <label class="drop" id="drop"><b>Click to upload the question paper or marking scheme</b><span class="muted">PDF or photos</span>
         <input id="files" type="file" name="files" accept=".pdf,.png,.jpg,.jpeg" multiple></label>
     </form>
     <div class="status" id="status" hidden><div class="spinner"></div><span id="status-msg"></span></div>
+  </section>
+
+  <section class="card ai-note" id="ai-note" hidden>
+    <b>Check the rubric ScoreSense wrote</b>
+    <div>ScoreSense wrote the answers for the questions marked <span class="ai">AI</span> from its own knowledge, which is not always right. Check the key and the points, change what is wrong, then confirm.</div>
+    <button type="button" id="checked">I have checked the rubric</button>
   </section>
 
   <section class="card">
@@ -109,6 +122,7 @@
   const $ = id => document.getElementById(id);
   const OPTIONS = ["A", "B", "C", "D"];
   let test = {};
+  let byAi = new Set(), qtext = {};   // what ScoreSense wrote and the teacher hasn't checked; the questions as printed
 
   function el(tag, attrs = {}, ...kids) {
     const e = document.createElement(tag);
@@ -158,11 +172,13 @@
     test.key = test.key || {};
     $("keys").replaceChildren(...(test.mcq || []).map(n => {
       const row = el("div", { class: "krow" }, el("b", {}, "Q" + n));
+      if (byAi.has(String(n))) row.title = "Written by ScoreSense: check it";
       for (const o of OPTIONS) {
         const b = el("button", { class: "opt" + (test.key[n] === o ? " on" : ""), type: "button", "aria-label": `Q${n} option ${o}` }, o);
         b.onclick = () => { if (test.key[n] === o) delete test.key[n]; else test.key[n] = o; drawKeys(); save({ key: test.key }); };
         row.append(b);
       }
+      if (byAi.has(String(n))) row.append(el("span", { class: "ai" }, "AI"));
       return row;
     }));
     const done = (test.mcq || []).filter(n => test.key[n]).length;
@@ -207,8 +223,9 @@
       area.oninput = update;
       need.oninput = update;
       const d = el("details", { class: "pq", "data-q": n },
-        el("summary", {}, el("b", {}, "Q" + n), el("span", { class: "muted" }, `${marks} mark${marks === 1 ? "" : "s"}`), count),
-        el("div", { class: "pq-body" }, area,
+        el("summary", {}, el("b", {}, "Q" + n), el("span", { class: "muted" }, `${marks} mark${marks === 1 ? "" : "s"}`),
+          ...(byAi.has(n) ? [el("span", { class: "ai" }, "AI")] : []), count),
+        el("div", { class: "pq-body" }, ...(qtext[n] ? [el("div", { class: "qtext" }, qtext[n])] : []), area,
           el("label", { class: "need" }, "Points needed for full marks:", need, el("span", {}, "(leave empty for all; e.g. 3 for \u201cgive any three\u201d)"))));
       if (open.has(n)) d.open = true;
       return d;
@@ -231,6 +248,9 @@
     $("problems").replaceChildren(...((test.problems || []).length
       ? test.problems.map(p => el("div", { class: "problem" }, "⚠ " + p))
       : secs.length ? [el("div", { class: "good" }, `✓ The sections add up to the paper's ${test.max_marks} marks.`)] : []));
+    byAi = new Set(test.by_ai || []);
+    qtext = test.question_text || {};
+    $("ai-note").hidden = !byAi.size;
     if (document.activeElement !== $("mcq")) $("mcq").value = listText(test.mcq || []);
     drawKeys();
     if (!document.activeElement || !document.activeElement.closest("details.pq")) drawPoints();
@@ -256,6 +276,7 @@
   $("scheme").oninput = () => { $("sum").textContent = schemeSum($("scheme").value); save({ scheme: $("scheme").value }); };
   $("scheme").onchange = drawPoints;
   $("mcq").onchange = () => { test.mcq = parseList($("mcq").value); $("mcq").value = listText(test.mcq); drawKeys(); drawPoints(); save({ mcq: test.mcq }); };
+  $("checked").onclick = () => { test.by_ai = []; show(); save({ checked: true }); };
   poll();
 </script>
 </body>

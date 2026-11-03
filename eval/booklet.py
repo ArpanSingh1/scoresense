@@ -15,6 +15,8 @@ import base64
 import json
 import math
 import re
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,21 +27,23 @@ import numpy as np
 import pypdfium2 as pdfium
 
 from model import MODEL, OLLAMA_URL
-from segment import Block, cut_blocks, find_margin, ink_masks, margin_x, right_margin_x
+from segment import Block, cut_blocks, find_margin, ink_masks, margin_x, right_margin_x, ruled
 
 PDF_DPI = 150
 NUMBER_PROMPT = (
     "This is the left margin of a student's exam answer booklet, with the start of one answer. "
     "What question number did the student write in the margin? Copy it exactly as written, "
-    "for example 13, 34.1, 25 b) or (2). If what is written is not a number (a sign such as => "
+    "for example 13, 34.1, 25 b) or (2). Sub-parts written with letters or Roman numerals, such as "
+    "i), ii), iii), (a) or b), are not numbers: copy them as written, for example ii). "
+    "If what is written is not a number (a sign such as => "
     "or a word), answer -. If a number is covered, crossed out or unreadable, answer ?. "
     "Never guess. Return only the number.")
 NUMBER_CONFIDENCE = 0.5
 CIRCLED = {chr(0x2460 + i): f"({i + 1})" for i in range(20)}
 # A handwritten Q is often read as 0 ("016." for "Q16."), so up to three digits, leading zero dropped.
-LABEL = re.compile(r"^\s*(?:Q\.?|A[nmu]s\.?)?\s*(\(?)\s*(\d{1,3})(?:\s*\.\s*(\d))?")
+LABEL = re.compile(r"^\s*(?:Q\.?|A[nmu]s\.?)?\s*(\(?)\s*(\d{1,3})(?!\d)(?:\s*\.\s*(\d))?")
 # "Q.25)" is often read as "8.25", "9.25" or "0.25": a lone 8, 9 or 0 and a dot before the number.
-Q_AS_DIGIT = re.compile(r"^\s*[890]\s*[.,]\s*(\d{1,2})(?!\d)")
+Q_AS_DIGIT = re.compile(r"^\s*\(?\s*[890]\s*(?:[.,]\s*(\d{1,2})|(\d{2}))(?!\d)")
 
 
 @dataclass
@@ -86,8 +90,15 @@ def ask(image: np.ndarray, prompt: str) -> tuple[str, Optional[float], Optional[
         body["think"] = False                    # a short answer is wanted, not reasoning
     req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        data = json.load(resp)
+    for attempt in (1, 2):                   # the model can stall once; one stall shouldn't fail the booklet
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                data = json.load(resp)
+            break
+        except (TimeoutError, urllib.error.URLError):     # a stall, or the model restarting
+            if attempt == 2:
+                raise
+            time.sleep(5)
     tokens = [t for t in data.get("logprobs") or [] if t.get("logprob") is not None]
     lp = [t["logprob"] for t in tokens]
     # For a question number, how sure the model is of its digits: "25 b)" is unsure about "b)".
@@ -139,6 +150,8 @@ def mark_crop(img: np.ndarray, mx: int, b: Block) -> np.ndarray:
     written over the line), up to the first gap: the space before the answer."""
     h, w = img.shape[:2]
     _, y0, _, y1 = b.mark
+    # A mark taller than a line holds two ("Q.33)" with "(a)" under it): the number is the first.
+    y1 = min(y1, y0 + int(h * 0.05))
     pad = int(h * 0.015)
     pen, _ = ink_masks(img[y0:y1 + 1])
     cols = pen.any(axis=0)
@@ -167,6 +180,8 @@ def q_reading(label: str) -> tuple[Optional[str], bool]:
     m = Q_AS_DIGIT.match(label)
     if not m:
         return None, False
+    if m.group(2):                               # "829": Q.29 with the dot missed
+        return str(int(m.group(2))), False
     return str(int(m.group(1))), len(m.group(1)) == 2
 
 
@@ -199,7 +214,9 @@ def merge_pairs(blocks: list[Block], reads: list[tuple[str, Optional[float]]], h
         return alt if certain else parse(label)[0]
 
     def no_digits(label: str) -> bool:
-        return not any(ch.isdigit() for ch in label)
+        """A word such as "Ans" or "Q" with no number: the other half of a "Q1. / Ans 1." pair. A
+        bare "?" is a number the model couldn't read, so a question of its own."""
+        return not any(ch.isdigit() for ch in label) and any(ch.isalpha() for ch in label)
 
     out_b, out_r = [blocks[0]] if blocks else [], [reads[0]] if reads else []
     for b, r in zip(blocks[1:], reads[1:]):
@@ -228,7 +245,18 @@ def assign(crops: list[Crop]) -> list[Question]:
     seen: dict[str, int] = {}
     current: Optional[Question] = None
     last_point = 0
-    for c in crops:
+    last_good: Optional[int] = None   # the last question number that followed the order
+
+    def clear_numbers(c: Crop) -> set[int]:
+        """The question numbers a mark may be ("8.3": 3, or part 8.3). Used only to check for the
+        number two ahead, so an unsure reading that agrees with the order is enough."""
+        if c.kind == "continuation":
+            return set()
+        alt, _ = q_reading(c.label)
+        n = parse(c.label)[0]
+        return {int(x) for x in (alt, n) if x and "." not in x}
+
+    for idx, c in enumerate(crops):
         if c.kind == "continuation":
             if current is None:                  # a heading such as "Section A", or a cover page
                 current = Question("start")
@@ -239,10 +267,12 @@ def assign(crops: list[Crop]) -> list[Question]:
         unsure = not sure(c.label, c.confidence)
         cur = current.number if current else "start"
         cur_main = int(cur.split(".")[0]) if cur not in ("?", "start") else None
+        # The order is judged from the last number that followed it: a misread one ("ii)" read as
+        # 10) must not make the next real number (33) look out of place.
+        order = last_good if last_good is not None and current is not None and current.flags else cur_main
         alt, certain = q_reading(c.label)
-        if alt and (certain or (int(alt) in ((cur_main or 0) + 1, (cur_main or 0) + 2)
-                                and not (number and cur_main and number.split(".")[0] == str(cur_main)))):
-            number = alt                         # "8.25" -> 25; "8.1" -> 1 when 1 comes next
+        if alt and (certain or int(alt) in ((order or 0) + 1, (order or 0) + 2)):
+            number = alt                         # "8.25" -> 25; "8.9" -> 9 when 9 comes next
         main = int(number.split(".")[0]) if number else None
         # "35" read as 3.5: take the number without the dot when that is the next question.
         if number and "." in number and cur_main is not None and main not in (cur_main, cur_main + 1)                 and int(number.replace(".", "")) in (cur_main + 1, cur_main + 2):
@@ -267,16 +297,32 @@ def assign(crops: list[Crop]) -> list[Question]:
             plausible = main is not None
         else:
             plausible = main is not None and (main in (cur_main + 1, cur_main + 2)
-                                              or (main == cur_main and "." in number))
+                                              or (main == cur_main and "." in number)
+                                              or (order is not None and main in (order + 1, order + 2)))
         # A point inside the current answer: written in brackets, or a small number below the
         # question's own that carries on its 1, 2, 3.
-        if cur_main is not None and number and not unsure and (
+        next_up = bracketed and main is not None and cur_main is not None and main == cur_main + 1 and any(
+            cur_main + 2 in clear_numbers(x) for x in crops[idx + 1:idx + 3])
+        if cur_main is not None and number and not unsure and not next_up and (
                 bracketed or (main <= 9 and "." not in number and main < cur_main
                               and last_point <= main <= last_point + 2)):
             c.kind = "point"
             last_point = main
             current.crops.append(c)
             continue
+        # A number the model couldn't read ("?") between Q1 and a clear Q3 on the next mark is Q2.
+        if number is None and cur_main is not None and "?" in c.label:
+            nxt = next((n for n in map(clear_numbers, crops[idx + 1:idx + 3]) if n), set())
+            if cur_main + 2 in nxt:
+                number, main, unsure, plausible = str(cur_main + 1), cur_main + 1, True, True
+                c.kind = "question"
+                q = Question(number, flags=[f"number not readable; taken as Q{number} from the order: check it"],
+                             unsure=True)
+                seen.setdefault(number, c.page)
+                questions.append(q)
+                q.crops.append(c)
+                current, last_point = q, 0
+                continue
         not_number = c.label.strip() in ("-", "–") and not unsure
         if current is not None and (number is None or (unsure and not plausible)):
             c.kind = "note"                      # a word or sign (=>) in the margin, or unsure
@@ -287,6 +333,11 @@ def assign(crops: list[Crop]) -> list[Question]:
                 flag = "a mark in the margin could not be read; check this is all one answer"
                 if flag not in current.flags:
                     current.flags.append(flag)
+            current.crops.append(c)
+            continue
+        ref = last_good if last_good is not None else cur_main
+        if current is not None and number in seen and ref is not None and main < ref - 5:
+            c.kind = "note"                      # "(b)" read as 6, "ii)" as 11, well after Q6 and Q11
             current.crops.append(c)
             continue
         c.kind = "question"
@@ -300,8 +351,10 @@ def assign(crops: list[Crop]) -> list[Question]:
         if unsure and cur_main is None and q.number != "?":
             q.flags.append(f"number read as \"{c.label}\", but not for sure: check it")
             q.unsure = True
-        if cur_main is not None and q.number != "?" and not plausible and (main < cur_main or main > cur_main + 5):
-            q.flags.append(f"Q{q.number} comes after Q{cur}: check the number (it may be answered out of order)")
+        if ref is not None and q.number != "?" and not (ref < main <= ref + 2) and (main < ref or main > ref + 5):
+            q.flags.append(f"Q{q.number} comes after Q{ref}: check the number (it may be answered out of order)")
+        elif q.number != "?":
+            last_good = main
         questions.append(q)
         q.crops.append(c)
         current, last_point = q, 0
@@ -337,7 +390,7 @@ def process(files: list[Path], out_dir: Path, progress: Callable[[str], None] = 
             img = rotate(img, degrees)
             progress(f"Page {page_no} of {total}: finding the answers")
             mx_found = find_margin(img)
-            if mx_found is None and page_no % 2 in last_margin and ink_masks(img)[0].sum() > 0:
+            if mx_found is None and page_no % 2 in last_margin and ruled(img):
                 mx_found = last_margin[page_no % 2]
             if mx_found is not None:
                 last_margin[page_no % 2] = mx_found

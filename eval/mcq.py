@@ -11,14 +11,20 @@ as A-D.
     review  the option can't be trusted: no mark is suggested
 """
 import math
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Callable, Optional
+
+import cv2
+import numpy as np
 
 from model import LETTER_OPTIONS, REVIEW_THRESHOLD, ROMAN_OPTIONS, check_option, read_answer
 
 # An option label, as written by students: (C), C), (c), (ii), ii).
 OPTION_START = re.compile(r"\(?\s*(?:[A-Da-d]|i{1,3}|iv)\s*\)")
+LETTER_SURE = 0.8   # the share an option letter needs against the other letters (see label_confidence)
 ROMAN_TO_LETTER = dict(zip(ROMAN_OPTIONS, LETTER_OPTIONS))
 # What students write before the answer: "Q2.", "Ans 2.", read at times as "02.", "Aw10.", "①5."
 NUMBER_WORDS = re.compile(r"(?i)\b(?:q|ans|aus|ams|aw|an|o)\b")
@@ -32,16 +38,27 @@ def only_number(text: str) -> bool:
 
 def strip_number(text: str) -> str:
     """The answer without the question number in front: "Q1. Ans 1. (C) 1:4" -> "(C) 1:4"."""
+    text = re.sub(r"(?<![A-Za-z])C([A-D])\)", r"(\1)", text)   # "(D)" with a round bracket read as "CD)"
     m = OPTION_START.search(text)
     if m and only_number(text[:m.start()]):
         return text[m.start():]
     return text
 
 
-def label_confidence(tokens: list[tuple[str, float]], label: str) -> Optional[float]:
+def label_confidence(tokens: list[tuple[str, float]], label: str,
+                     alts: Optional[list[list[tuple[str, float]]]] = None) -> Optional[float]:
     """Probability of the option label itself ("C", or "ii" over one or more tokens), the first
-    time the model wrote it; None if it can't be found among the tokens."""
+    time the model wrote it; None if it can't be found among the tokens.
+
+    A one-letter label is weighed against the other letters only: on "Q.7) (D) 1:8" the model
+    hesitates between "(D" and "Q" (whether to copy the question number), not between D and B."""
     want = label.lower()
+    if alts and len(want) == 1:
+        for (tok, lp), others in zip(tokens, alts):
+            if re.sub(r"[^a-z]", "", tok.lower()) in (want, "c" + want):   # " CD": "(D" with its bracket read as C
+                rival = sum(math.exp(a_lp) for a, a_lp in others
+                            if (x := re.sub(r"[^a-z]", "", a.lower())) in ("a", "b", "c", "d") and x != want)
+                return math.exp(lp) / (math.exp(lp) + rival)
     for i in range(len(tokens)):
         got, lps = "", []
         for tok, lp in tokens[i:i + 3]:
@@ -59,15 +76,45 @@ def label_confidence(tokens: list[tuple[str, float]], label: str) -> Optional[fl
     return None
 
 
+def without_red(image: Path) -> Optional[Path]:
+    """A copy of the crop with the teacher's red ink painted white, or None if it has none."""
+    img = cv2.imread(str(image))
+    b, g, r = (img[..., i].astype(int) for i in range(3))
+    red = (r - g > 40) & (r - b > 20)
+    if red.sum() < 20:
+        return None
+    img[red] = 255
+    fd, path = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    cv2.imwrite(path, img)
+    return Path(path)
+
+
 def read_choice(image: Path) -> dict:
     """{"read": text, "option": "A"-"D" or None, "reasons": [...]}
 
-    The answer's overall confidence is low whenever a long option sentence has an unclear word,
-    so for MCQs only the confidence of the option label counts (as for question numbers)."""
+    A teacher's red tick across the letter makes it look unclear: then the letter is read again
+    with the red ink removed, and taken if it is clear that way."""
+    r = read_label(image)
+    if any(x in r["reasons"] for x in ("option letter not clear", "low confidence")):
+        clean = without_red(image)
+        if clean:
+            try:
+                again = read_label(clean)
+            finally:
+                clean.unlink(missing_ok=True)
+            if again["option"]:
+                return again
+    return r
+
+
+def read_label(image: Path) -> dict:
+    """read_choice without the second look. The answer's overall confidence is low whenever a
+    long option sentence has an unclear word, so only the confidence of the option label counts."""
     ans = read_answer(str(image), "")
     text = strip_number(ans["text"] or "")
-    if not text.strip() or only_number(text):
-        return {"read": text, "option": None, "reasons": ["nothing written"]}
+    if not text.strip() or only_number(text) or len(text.strip()) < 4 and not OPTION_START.match(text):
+        return {"read": text, "option": None, "reasons": ["nothing written"]}   # "QR": the page's QR code
     reasons = [r for r in ans["review_reasons"] if r not in ("no text", "low confidence")]
     _, option, why = check_option(text, LETTER_OPTIONS)
     label = option
@@ -76,8 +123,8 @@ def read_choice(image: Path) -> dict:
         if roman or why_roman != why:
             option, why, label = ROMAN_TO_LETTER.get(roman), why_roman, roman
     if label and not why:
-        conf = label_confidence(ans.get("tokens", []), label)
-        if conf is None or conf < REVIEW_THRESHOLD:
+        conf = label_confidence(ans.get("tokens", []), label, ans.get("alts"))
+        if conf is None or conf < (LETTER_SURE if len(label) == 1 else REVIEW_THRESHOLD):
             reasons.append("option letter not clear" if conf is not None else "low confidence")
     elif "low confidence" in ans["review_reasons"]:
         reasons.append("low confidence")
