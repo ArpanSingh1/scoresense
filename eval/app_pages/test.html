@@ -74,6 +74,8 @@
   .q .what { flex: 1; }
   .q .what span { display: block; font-size: 13px; color: var(--muted); }
   .q .avg { font-weight: 700; white-space: nowrap; }
+  .redo { border: 1px solid var(--line); background: var(--card); border-radius: 8px; width: 30px; height: 30px; cursor: pointer; font-size: 15px; color: var(--muted); }
+  .redo:hover { border-color: var(--accent); color: var(--accent); }
   .scroll { max-height: 560px; overflow: auto; }
   .empty { padding: 24px 18px; color: var(--muted); text-align: center; }
   dialog { border: none; border-radius: 16px; padding: 0; width: min(520px, 94vw); }
@@ -162,6 +164,7 @@
       el("div", {}, "Date", el("b", {}, fmtDate(t.date))),
       el("div", {}, "Total marks", el("b", {}, t.total_marks ? fmt(t.total_marks) : "–")),
       el("div", {}, "MCQ key", el("b", {}, mcq ? `${keyed} of ${mcq} set` : "–")),
+      el("div", {}, "Marking points", el("b", {}, (() => { const n = Object.values(t.points || {}).filter(v => (v.points || []).length).length; return n ? `${n} question${n === 1 ? "" : "s"}` : "–"; })())),
       el("div", {}, "Question paper", el("a", { href: `/test/${testId}/setup` }, (t.question_paper || []).length ? "View / change" : "Upload")));
     const warn = !t.scheme ? "Set the marks scheme so marks can be totalled and ranked: " :
                  mcq && keyed < mcq ? "The MCQ answer key is not complete, so those MCQs won't be checked automatically: " : "";
@@ -231,10 +234,22 @@
       const sub = [`${q.attempted} of ${t.stats.read} answered`];
       if (acc != null) sub.push(`accuracy ${acc}%`);
       if (q.to_look) sub.push(`${q.to_look} need a look`);
-      return el("div", { class: "q" },
+      const row = el("div", { class: "q" },
         el("div", { class: "dot " + cls }, q.number.length > 3 ? "Q" : q.number),
         el("div", { class: "what" }, "Question " + q.number, el("span", {}, sub.join(" · "))),
         el("div", { class: "avg" }, q.average == null ? "–" : fmt(q.average), q.out_of ? ` / ${fmt(q.out_of)}` : ""));
+      if (((t.points || {})[q.number] || {}).points?.length && t.stats.read) {
+        const b = el("button", { class: "redo", type: "button", title: "Check this question again for all students, against its marking points" }, "↻");
+        b.onclick = async () => {
+          if (!confirm(`Check Q${q.number} again for all ${t.stats.read} students against its marking points? Marks you gave yourself are kept.`)) return;
+          const res = await fetch(`/api/test/${testId}/grade`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q.number }) });
+          const j = await res.json();
+          if (!res.ok) { alert(j.detail || "Could not start."); return; }
+          load();
+        };
+        row.insertBefore(b, row.lastChild);
+      }
+      return row;
     }));
   }
 

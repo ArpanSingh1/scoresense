@@ -2,9 +2,10 @@
 
     python eval/app.py        (or double-click ScoreSense_App.bat), then open http://localhost:8000
 
-A test has its question paper, marks scheme and MCQ key, and the answer sheets of its students.
-Each sheet is read (booklet.py), its MCQs checked against the key (mcq.py), and the teacher marks
-the rest; the test page shows progress, the rank list and question-wise performance.
+A test has its question paper, marks scheme, MCQ key and marking points, and the answer sheets of
+its students. Each sheet is read (booklet.py), its MCQs checked against the key (mcq.py) and its long
+answers against the marking points (grade.py); the teacher confirms or changes every suggested mark.
+The test page shows progress, the rank list and question-wise performance.
 
 Everything stays on this computer, outside the code folder and OneDrive:
     <data>/tests/<test>/test.json        the test, its marks scheme and key; paper_* is its question paper
@@ -32,6 +33,7 @@ from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from booklet import process
+from grade import grade
 from mcq import check as check_mcq
 from qpaper import read_scheme
 
@@ -136,12 +138,25 @@ def mcq_step(sheet_id: str, job: dict) -> None:
     write_json(JOBS_DIR / sheet_id / "result.json", job["result"])
 
 
+def grade_step(sheet_id: str, job: dict, only: Optional[str] = None) -> None:
+    """Check the sheet's long answers against its test's marking points, if any are set."""
+    test_id = sheet_meta(sheet_id).get("test_id")
+    test = read_json(TESTS_DIR / test_id / "test.json", {}) if test_id else {}
+    points = {n: v for n, v in test.get("points", {}).items() if v.get("points")}
+    if not points or (only and only not in points):
+        return
+    grade(job["result"], JOBS_DIR / sheet_id / "crops", points, parse_scheme(test.get("scheme", "")),
+          only=only, progress=lambda m: job.__setitem__("message", m))
+    write_json(JOBS_DIR / sheet_id / "result.json", job["result"])
+
+
 def do_sheet(sheet_id: str, files: list[Path]) -> None:
     job = jobs[sheet_id]
     job["result"] = process(files, JOBS_DIR / sheet_id,
                             progress=lambda m: job.__setitem__("message", m),
                             partial=lambda r: job.__setitem__("result", r))
     mcq_step(sheet_id, job)
+    grade_step(sheet_id, job)
 
 
 def do_paper(test_id: str, files: list[Path]) -> None:
@@ -165,6 +180,8 @@ def worker() -> None:
                 do_sheet(item, files)
             elif kind == "mcq":
                 mcq_step(item, state)
+            elif kind == "grade":
+                grade_step(item, state, only=files[0] if files else None)
             else:
                 do_paper(item, files)
             state.update(status="done", message="")
@@ -207,7 +224,9 @@ def get_job(sheet_id: str) -> dict:
 
 
 def needs_look(q: dict) -> bool:
-    return bool(q.get("flags")) or bool(q.get("mcq") and q["mcq"]["verdict"] != "right")
+    g = q.get("grading")
+    partial = bool(g and (g["empty"] or g["suggested"] is None or g["suggested"] < g["out_of"]))
+    return bool(q.get("flags")) or bool(q.get("mcq") and q["mcq"]["verdict"] != "right") or partial
 
 
 def sheet_summary(sheet_id: str, scheme: dict[str, float]) -> dict:
@@ -267,6 +286,24 @@ def check_mcq_again(sheet_id: str):
     job.update(status="queued", message="Waiting for its turn")
     work.put(("mcq", sheet_id, []))
     return {"ok": True}
+
+
+@app.post("/api/test/{test_id}/grade")
+def grade_again(test_id: str, data: dict = Body({})):
+    """Check the long answers of every read sheet (again) against the marking points; with
+    {"question": "25"}, only that question: e.g. after its marking points were changed."""
+    test = load_test(test_id)
+    only = str(data.get("question") or "") or None
+    if not any(v.get("points") for n, v in test.get("points", {}).items() if only in (None, n)):
+        raise HTTPException(400, "Write the marking points for this question first.")
+    count = 0
+    for sheet_id in test.get("sheets", []):
+        job = get_job(sheet_id) if (JOBS_DIR / sheet_id).is_dir() else {}
+        if job.get("status") == "done" and job.get("result"):
+            job.update(status="queued", message="Waiting for its turn")
+            work.put(("grade", sheet_id, [only] if only else []))
+            count += 1
+    return {"queued": count}
 
 
 @app.get("/api/job/{sheet_id}/marks")
@@ -419,6 +456,11 @@ def edit_test(test_id: str, data: dict = Body(...)):
             test["mcq"] = sorted({int(n) for n in data["mcq"] if 0 < int(n) < 1000})
         if "key" in data:
             test["key"] = {str(int(k)): v for k, v in dict(data["key"]).items() if v in OPTIONS}
+        if "points" in data:                    # {"25": {"points": ["...", ...], "needed": 3}}
+            test["points"] = {
+                str(n)[:20]: {"points": [str(p).strip()[:500] for p in v.get("points", []) if str(p).strip()][:20],
+                              "needed": int(v["needed"]) if str(v.get("needed") or "").isdigit() else None}
+                for n, v in dict(data["points"]).items()}
         save_test(test)
     return {"ok": True}
 

@@ -47,6 +47,15 @@
   .opt.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
   .row input { width: 140px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+  details.pq { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; }
+  details.pq summary { cursor: pointer; padding: 8px 12px; display: flex; gap: 10px; align-items: baseline; }
+  details.pq summary b { min-width: 48px; }
+  details.pq summary .n { margin-left: auto; font-size: 13px; color: var(--muted); }
+  details.pq summary .n.set { color: var(--ok); font-weight: 600; }
+  .pq-body { padding: 0 12px 12px; }
+  .pq-body textarea { width: 100%; min-height: 90px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+  .pq-body .need { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 14px; color: var(--muted); }
+  .pq-body .need input { width: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
   @media (max-width: 700px) { .fields { grid-template-columns: 1fr 1fr; } .fields label:first-child { grid-column: 1 / -1; } }
 </style>
 </head>
@@ -87,6 +96,12 @@
     <div class="muted">Click the correct option for each question. Options printed as (a)–(d) or (i)–(iv) are the 1st to 4th: A = (a) = (i).</div>
     <div class="row"><label>MCQ questions: <input id="mcq" placeholder="1-20"></label><span class="muted" id="key-count"></span></div>
     <div class="keys" id="keys"></div>
+  </section>
+
+  <section class="card">
+    <h2>4. Marking points for written answers</h2>
+    <div class="muted">For each written question, list what an answer must say to earn its marks, <b>one point per line</b>, with one idea per point (as in the official marking scheme). ScoreSense reads each student's answer, checks which points it makes, quotes the student's words for each, and suggests marks for you to confirm. Questions without points are marked by you as usual.</div>
+    <div id="pqs"></div>
   </section>
 </main>
 <script>
@@ -154,6 +169,52 @@
     $("key-count").textContent = (test.mcq || []).length ? `${done} of ${test.mcq.length} answers set` : "Type the MCQ question numbers, e.g. 1-20";
   }
 
+  // Written questions: in the marks scheme, not MCQs. "1-20:1, 21-24:2" -> [["21", 2], ...]
+  function writtenQuestions() {
+    const out = [], mcq = new Set((test.mcq || []).map(String));
+    for (const part of ($("scheme").value || "").split(/[,;\n]+/)) {
+      const m = part.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-\s*(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)$/);
+      if (!m) continue;
+      if (m[2]) for (let n = +m[1]; n <= +m[2]; n++) out.push([String(n), +m[3]]);
+      else out.push([m[1], +m[3]]);
+    }
+    return out.filter(([n]) => !mcq.has(n));
+  }
+
+  function drawPoints() {
+    test.points = test.points || {};
+    const open = new Set([...document.querySelectorAll("details.pq[open]")].map(d => d.dataset.q));
+    const qs = writtenQuestions();
+    if (!qs.length) {
+      $("pqs").replaceChildren(el("div", { class: "muted", style: "margin-top:10px" }, "Set the marks scheme first; the written questions appear here."));
+      return;
+    }
+    $("pqs").replaceChildren(...qs.map(([n, marks]) => {
+      const spec = test.points[n] || { points: [], needed: null };
+      const count = el("span", { class: "n" + (spec.points.length ? " set" : "") },
+        spec.points.length ? `${spec.points.length} point${spec.points.length === 1 ? "" : "s"}` + (spec.needed ? `, any ${spec.needed}` : "") : "no points yet");
+      const area = el("textarea", { spellcheck: "true", placeholder: "Bharat Mata became the image of India (Bankim Chandra, Abanindranath Tagore)\nFolk tales and songs were collected (Rabindranath Tagore, Natesa Sastri)\nThe tricolour Swadeshi flag with eight lotuses" });
+      area.value = spec.points.join("\n");
+      const need = el("input", { type: "number", min: "1", placeholder: "all", "aria-label": `Points needed for full marks in Q${n}` });
+      need.value = spec.needed || "";
+      const update = () => {
+        const pts = area.value.split("\n").map(x => x.trim()).filter(Boolean);
+        test.points[n] = { points: pts, needed: need.value ? +need.value : null };
+        count.textContent = pts.length ? `${pts.length} point${pts.length === 1 ? "" : "s"}` + (need.value ? `, any ${need.value}` : "") : "no points yet";
+        count.className = "n" + (pts.length ? " set" : "");
+        save({ points: test.points });
+      };
+      area.oninput = update;
+      need.oninput = update;
+      const d = el("details", { class: "pq", "data-q": n },
+        el("summary", {}, el("b", {}, "Q" + n), el("span", { class: "muted" }, `${marks} mark${marks === 1 ? "" : "s"}`), count),
+        el("div", { class: "pq-body" }, area,
+          el("label", { class: "need" }, "Points needed for full marks:", need, el("span", {}, "(leave empty for all; e.g. 3 for \u201cgive any three\u201d)"))));
+      if (open.has(n)) d.open = true;
+      return d;
+    }));
+  }
+
   function show() {
     document.title = (test.name || "Test") + " setup · ScoreSense";
     $("back").href = `/test/${testId}`;
@@ -172,6 +233,7 @@
       : secs.length ? [el("div", { class: "good" }, `✓ The sections add up to the paper's ${test.max_marks} marks.`)] : []));
     if (document.activeElement !== $("mcq")) $("mcq").value = listText(test.mcq || []);
     drawKeys();
+    if (!document.activeElement || !document.activeElement.closest("details.pq")) drawPoints();
   }
 
   async function poll() {
@@ -192,7 +254,8 @@
   drop.addEventListener("drop", e => { $("files").files = e.dataTransfer.files; $("files").onchange(); });
   for (const k of ["name", "subject", "class_name", "date"]) $(k).oninput = () => save({ [k]: $(k).value });
   $("scheme").oninput = () => { $("sum").textContent = schemeSum($("scheme").value); save({ scheme: $("scheme").value }); };
-  $("mcq").onchange = () => { test.mcq = parseList($("mcq").value); $("mcq").value = listText(test.mcq); drawKeys(); save({ mcq: test.mcq }); };
+  $("scheme").onchange = drawPoints;
+  $("mcq").onchange = () => { test.mcq = parseList($("mcq").value); $("mcq").value = listText(test.mcq); drawKeys(); drawPoints(); save({ mcq: test.mcq }); };
   poll();
 </script>
 </body>

@@ -58,6 +58,16 @@
   .mcq.review { background: var(--warn-soft); }
   .mcq .v { font-weight: 700; }
   .mcq.right .v { color: var(--ok); } .mcq.wrong .v { color: #b3261e; } .mcq.review .v { color: var(--warn); }
+  .grading { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 14px; background: #fafbfd; }
+  .grading .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+  .grading .head b { font-size: 15px; }
+  .grading ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .grading li { display: flex; gap: 8px; align-items: baseline; }
+  .grading .ic { font-weight: 700; width: 16px; flex: none; }
+  .grading .yes .ic { color: var(--ok); } .grading .no .ic { color: #b3261e; }
+  .grading q { display: block; color: var(--muted); font-style: italic; quotes: "\201c" "\201d"; }
+  .grading details { margin-top: 8px; color: var(--muted); }
+  .grading details pre { white-space: pre-wrap; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
   .marker .auto { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; }
   .checkbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--accent-soft); border: 1px solid #c9d6fb; border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
   .key { background: var(--ok-soft); color: var(--ok); border-radius: 6px; padding: 1px 8px; font-weight: 600; font-size: 14px; }
@@ -117,7 +127,8 @@
   let key = {};                                                  // MCQ answer key from Exam setup: "1" -> "B"
   let by = {};                                                   // question index -> "model" or "teacher"
   let jobDone = false;
-  const needsLook = q => q.flags.length > 0 || (q.mcq && q.mcq.verdict !== "right");
+  const partial = g => g && (g.empty || g.suggested == null || g.suggested < g.out_of);
+  const needsLook = q => q.flags.length > 0 || (q.mcq && q.mcq.verdict !== "right") || partial(q.grading);
 
   function el(tag, attrs = {}, ...kids) {
     const e = document.createElement(tag);
@@ -234,14 +245,31 @@
     return el("div", { class: "mcq " + m.verdict }, ...bits);
   }
 
+  function gradingBox(g, transcript) {
+    const made = g.made > g.needed ? `${g.made} points made (${g.needed} needed for full marks)` : `${g.made} of ${g.needed} points made`;
+    const head = el("div", { class: "head" }, el("b", {}, made),
+      g.suggested != null ? el("span", {}, `Suggested: ${fmt(g.suggested)} / ${fmt(g.out_of)}`) : "",
+      g.empty ? el("span", { style: "color:var(--warn)" }, "No answer text could be read: please look at the answer") : "");
+    const items = g.points.map(p => el("li", { class: p.made ? "yes" : "no" },
+      el("span", { class: "ic" }, p.made ? "✓" : "✗"),
+      el("div", {}, p.point, ...(p.made ? [el("q", {}, p.quote)] : []),
+        ...(p.note ? [el("span", { class: "muted", style: "display:block;font-size:12px" }, "(" + p.note + ")")] : []))));
+    const box = el("div", { class: "grading" }, head, el("ul", {}, ...items));
+    if (transcript) box.append(el("details", {}, el("summary", {}, "What ScoreSense read"), el("pre", {}, transcript)));
+    return box;
+  }
+
   // Marks the model can suggest: right -> full marks, wrong -> 0. Never over a teacher's mark.
   function autofill() {
     let changed = false;
     for (const [q, i] of markables()) {
-      if (!q.mcq || q.mcq.verdict === "review" || by[i] === "teacher") continue;
+      if (by[i] === "teacher") continue;
       const o = outOf(q.number);
       if (o == null) continue;
-      const want = q.mcq.verdict === "right" ? o : 0;
+      let want;
+      if (q.mcq && q.mcq.verdict !== "review") want = q.mcq.verdict === "right" ? o : 0;
+      else if (q.grading && !q.grading.empty && q.grading.suggested != null) want = Math.min(q.grading.suggested, o);
+      else continue;
       if (marks[i] !== want) { marks[i] = want; by[i] = "model"; changed = true; }
     }
     if (changed) save();
@@ -276,7 +304,8 @@
            ...(key[q.number] ? [el("span", { class: "key" }, "Key: " + key[q.number])] : []),
            ...(markable(q) ? [el("div", { class: "marker" })] : [])),
         ...q.flags.map(f => el("div", { class: "flag" }, "⚠ " + f)),
-        ...(q.mcq ? [mcqLine(q.mcq)] : []));
+        ...(q.mcq ? [mcqLine(q.mcq)] : []),
+        ...(q.grading ? [gradingBox(q.grading, q.transcript)] : []));
       if (markable(q)) card.onclick = () => activate(i);
       for (const c of q.crops) {
         const img = el("img", { src: `/job/${jobId}/crops/${c.file}`, alt: `Answer crop, page ${c.page}`, loading: "lazy" });

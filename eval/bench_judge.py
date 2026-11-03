@@ -1,7 +1,10 @@
 """Compare models as judges of long answers: which marking points does the answer make?
 
-One real answer (Class 10 SST booklet, Q25, 4 paragraphs, transcribed by hand) and 10 single-idea
-marking points: 6 the student made and 4 decoys that reuse the answer's words without its meaning.
+Three answers to one question, each with single-idea marking points:
+    strong      the real answer (Class 10 SST booklet, Q25, transcribed by hand): 6 points made,
+                4 decoys that reuse the answer's words without its meaning
+    weak        a short answer with a wrong fact and vague lines ("A flag was made"): 1 of 7 made
+    paraphrase  correct points in the student's own words: 3 made, 2 not
 Each point is asked about separately; the model must quote the student's words, and a "yes" counts
 only when that quote is really in the answer (points.evidence_found).
 
@@ -49,6 +52,32 @@ POINTS = [  # (point, made by the student?)
     ("The Jallianwala Bagh massacre made people angry and united them.", False),
     ("Folk theatre such as Jatra was performed in villages to spread nationalist messages.", False),
 ]
+WEAK = (
+    "Nationalism grew because of many things. Bharat Mata was painted by Mahatma Gandhi. People sang songs. "
+    "A flag was made. History was taught in schools. Folk tales were collected by Rabindranath Tagore in Bengal.")
+WEAK_POINTS = [
+    ("Bharat Mata became the image of India (Bankim Chandra Chattopadhyay, Abanindranath Tagore).", False),
+    ("The hymn Vande Mataram was sung during the Swadeshi movement.", False),
+    ("A tricolour flag with eight lotuses and a crescent moon was designed in the Swadeshi movement.", False),
+    ("History was reinterpreted so that Indians could take pride in their past achievements.", False),
+    ("Gandhiji's Swaraj flag had a spinning wheel (charkha) at the centre.", False),
+    ("Raja Ravi Varma painted images of Indian heroes and gods that were sold across India.", False),
+    ("Folk tales, songs and legends were collected (e.g. by Rabindranath Tagore or Natesa Sastri).", True),
+]
+PARAPHRASE = (
+    "Our country was shown as a mother goddess called Bharat Mata, first pictured by Bankim Chandra. "
+    "Leaders like Tagore went from village to village gathering nursery rhymes and old stories, because "
+    "these showed the true culture of ordinary people. Gandhiji's own flag had a spinning wheel in the "
+    "middle, and people carried it in marches.")
+PARAPHRASE_POINTS = [
+    ("Bharat Mata became the image of India (Bankim Chandra Chattopadhyay, Abanindranath Tagore).", True),
+    ("Folk tales, songs and legends were collected (e.g. by Rabindranath Tagore or Natesa Sastri).", True),
+    ("Gandhiji's Swaraj flag had a spinning wheel (charkha) at the centre.", True),
+    ("The hymn Vande Mataram was sung during the Swadeshi movement.", False),
+    ("A tricolour flag with eight lotuses and a crescent moon was designed in the Swadeshi movement.", False),
+]
+CASES = [("strong", ANSWER, POINTS), ("weak", WEAK, WEAK_POINTS), ("paraphrase", PARAPHRASE, PARAPHRASE_POINTS)]
+
 PROMPT = """You are helping a teacher mark a student's exam answer.
 
 Question: {question}
@@ -68,10 +97,10 @@ SCHEMA = {"type": "object", "properties": {"made": {"type": "boolean"}, "quote":
           "required": ["made", "quote"]}
 
 
-def judge(model: str, point: str) -> tuple[bool, bool, str]:
+def judge(model: str, answer: str, point: str) -> tuple[bool, bool, str]:
     """(model said yes, yes with a quote really in the answer, quote)"""
     body = {"model": model, "stream": False, "format": SCHEMA,
-            "messages": [{"role": "user", "content": PROMPT.format(question=QUESTION, answer=ANSWER, point=point)}],
+            "messages": [{"role": "user", "content": PROMPT.format(question=QUESTION, answer=answer, point=point)}],
             "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 4000}}
     req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
@@ -84,25 +113,27 @@ def judge(model: str, point: str) -> tuple[bool, bool, str]:
         out = json.loads(m.group(0)) if m else {"made": False, "quote": ""}
     said = bool(out.get("made"))
     quote = str(out.get("quote", ""))
-    return said, said and evidence_found(quote, ANSWER), quote
+    return said, said and evidence_found(quote, answer), quote
 
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     for model in sys.argv[1:]:
         start = time.time()
-        right = false_credit = missed = 0
-        for point, made in POINTS:
-            said, counted, quote = judge(model, point)
-            ok = counted == made
-            right += ok
-            false_credit += counted and not made
-            missed += made and not counted
-            mark = "ok " if ok else "BAD"
-            print(f"  {mark} {'made' if made else 'decoy':5} said={'yes' if said else 'no ':3} "
-                  f"counted={'yes' if counted else 'no ':3} | {point[:55]} | {quote[:60]}", flush=True)
-        print(f"{model}: {right}/10 right, false credit {false_credit}, missed {missed}, "
-              f"{(time.time() - start) / len(POINTS):.0f} s/point\n", flush=True)
+        right = false_credit = missed = asked = 0
+        for name, answer, points in CASES:
+            for point, made in points:
+                said, counted, quote = judge(model, answer, point)
+                ok = counted == made
+                asked += 1
+                right += ok
+                false_credit += counted and not made
+                missed += made and not counted
+                mark = "ok " if ok else "BAD"
+                print(f"  {mark} {name:10} {'made' if made else 'not':4} said={'yes' if said else 'no ':3} "
+                      f"counted={'yes' if counted else 'no ':3} | {point[:50]} | {quote[:50]}", flush=True)
+        print(f"{model}: {right}/{asked} right, false credit {false_credit}, missed {missed}, "
+              f"{(time.time() - start) / asked:.0f} s/point\n", flush=True)
 
 
 if __name__ == "__main__":

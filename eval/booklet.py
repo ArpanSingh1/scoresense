@@ -73,7 +73,8 @@ def load_pages(files: list[Path]) -> list[tuple[str, list[np.ndarray]]]:
 
 
 def ask(image: np.ndarray, prompt: str) -> tuple[str, Optional[float], Optional[float]]:
-    """Model's answer, minimum and mean token probability."""
+    """Model's answer, minimum probability of its digit tokens (of all tokens if it has no digits),
+    and mean token probability."""
     ok, png = cv2.imencode(".png", image)
     body = {"model": MODEL, "stream": False, "logprobs": True,
             "options": {"temperature": 0, "num_predict": 20},
@@ -84,9 +85,12 @@ def ask(image: np.ndarray, prompt: str) -> tuple[str, Optional[float], Optional[
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=300) as resp:
         data = json.load(resp)
-    lp = [t["logprob"] for t in data.get("logprobs") or [] if t.get("logprob") is not None]
+    tokens = [t for t in data.get("logprobs") or [] if t.get("logprob") is not None]
+    lp = [t["logprob"] for t in tokens]
+    # For a question number, how sure the model is of its digits: "25 b)" is unsure about "b)".
+    digits = [t["logprob"] for t in tokens if any(ch.isdigit() for ch in t.get("token", ""))] or lp
     text = data["message"]["content"].strip().strip("`\"' ")
-    return text, (math.exp(min(lp)) if lp else None), (math.exp(sum(lp) / len(lp)) if lp else None)
+    return text, (math.exp(min(digits)) if digits else None), (math.exp(sum(lp) / len(lp)) if lp else None)
 
 
 ROTATIONS = {0: None, 90: cv2.ROTATE_90_COUNTERCLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_CLOCKWISE}
@@ -107,7 +111,10 @@ def orient(pages: list[np.ndarray]) -> int:
         if not upright:
             continue
         a = upright[0] % 180
-        candidates = (a, a + 180)
+        # The margin line is on the left: when only one way round has it there, that decides.
+        candidates = [d for d in (a, a + 180) if d in upright]
+        if len(candidates) == 1:
+            return candidates[0]
         test = rotate(img, a)
         pen, _ = ink_masks(test)
         rows = np.where(pen.sum(axis=1) > pen.shape[1] * 0.02)[0]
@@ -207,7 +214,9 @@ def assign(crops: list[Crop]) -> list[Question]:
             current.crops.append(c)
             continue
         if cur_main is None:
-            plausible = main == 1 and cur == "start"
+            # No number to follow on from (the sheet may start at any question): take what is
+            # read, and tell the teacher when the model was unsure of it.
+            plausible = main is not None
         else:
             plausible = main is not None and (main in (cur_main + 1, cur_main + 2)
                                               or (main == cur_main and "." in number))
@@ -237,6 +246,8 @@ def assign(crops: list[Crop]) -> list[Question]:
             q.flags.append(f"Q{q.number} was already answered on page {seen[q.number]}")
         else:
             seen[q.number] = c.page
+        if unsure and cur_main is None and q.number != "?":
+            q.flags.append(f"number read as \"{c.label}\", but not for sure: check it")
         questions.append(q)
         q.crops.append(c)
         current, last_point = q, 0
