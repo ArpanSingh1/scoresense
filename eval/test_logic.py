@@ -81,6 +81,16 @@ class Grouping(unittest.TestCase):
         self.assertEqual([q.number for q in qs], ["5", "6", "7"])
         self.assertEqual(len(qs[1].crops), 3)
 
+    def test_skipped_number_read_as_the_next_is_taken_back(self):   # Science booklet: "Q22)" read as 8.23
+        qs = assign([crop("8.21", 0.64), crop("8.23", 0.63), crop("", None, "continuation", page=2),
+                     crop("9.23", 0.61, page=3), crop("8.24", 0.79, page=4)])
+        self.assertEqual([q.number for q in qs], ["21", "22", "23", "24"])
+        self.assertTrue(any("taken as Q22" in f for f in qs[1].flags))
+
+    def test_rewritten_number_after_a_real_gap_is_kept(self):       # Q22 was answered: 23 really is 23
+        self.assertEqual(numbers([crop("21"), crop("22"), crop("23"), crop("", None, "continuation", page=2),
+                                  crop("23", page=2), crop("24", page=2)]), ["21", "22", "23", "24"])
+
     def test_dot_misread_is_corrected_when_it_is_the_next_question(self):
         self.assertEqual(numbers([crop("34"), crop("3.5")]), ["34", "35"])
 

@@ -37,6 +37,7 @@ in the answer; words that merely appear in it are not enough, and a wrong fact d
 If it does, copy the student's exact words that make the point (one sentence or phrase) into "quote".
 If not, set "made" to false and "quote" to "".
 """
+DIAGRAM = re.compile(r"(?i)\b(diagrams?|draw[ns]?|drawing|sketch|labelled|graph)\b")
 SCHEMA = {"type": "object", "properties": {"made": {"type": "boolean"}, "quote": {"type": "string"}},
           "required": ["made", "quote"]}
 
@@ -85,7 +86,9 @@ def grade(result: dict, crops_dir: Path, points: dict[str, dict], scheme: dict[s
     for q in todo:                                      # 2. judge every point (the judge model)
         spec = points[q["number"]]
         marks = scheme.get(q["number"]) or scheme.get(q["number"].split(".")[0]) or 0
-        needed = max(1, min(int(spec.get("needed") or len(spec["points"])), len(spec["points"])))
+        # Without "Any two points...", a point a mark (36.1: two points printed, 1 mark: either point).
+        default = max(1, round(marks)) if marks else len(spec["points"])
+        needed = max(1, min(int(spec.get("needed") or default), len(spec["points"])))
         checked = []
         for p in spec["points"]:
             done += 1
@@ -95,7 +98,10 @@ def grade(result: dict, crops_dir: Path, points: dict[str, dict], scheme: dict[s
             else:
                 checked.append(judge(q["transcript"], p, q["number"], marks))
         made = sum(c["made"] for c in checked)
+        # A point about a drawing can't be judged from the transcript: when one is missing and full marks
+        # weren't reached in words, the mark is left to the teacher ("diagram"), the suggestion a minimum.
+        diagram = made < needed and any(not c["made"] and DIAGRAM.search(c["point"]) for c in checked)
         q["grading"] = {"points": checked, "made": made, "needed": needed, "out_of": marks,
                         "suggested": suggest(made, needed, marks) if marks else None,
-                        "empty": not q["transcript"]}
+                        "empty": not q["transcript"], "diagram": diagram}
     return result

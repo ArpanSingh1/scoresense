@@ -248,7 +248,8 @@
   function gradingBox(g, transcript) {
     const made = g.made > g.needed ? `${g.made} points made (${g.needed} needed for full marks)` : `${g.made} of ${g.needed} points made`;
     const head = el("div", { class: "head" }, el("b", {}, made),
-      g.suggested != null ? el("span", {}, `Suggested: ${fmt(g.suggested)} / ${fmt(g.out_of)}`) : "",
+      g.diagram ? el("span", { style: "color:var(--warn)" }, `Has a diagram: please look at the drawing and mark it (at least ${fmt(g.suggested)} / ${fmt(g.out_of)} from the words)`)
+        : g.suggested != null ? el("span", {}, `Suggested: ${fmt(g.suggested)} / ${fmt(g.out_of)}`) : "",
       g.empty ? el("span", { style: "color:var(--warn)" }, "No answer text could be read: please look at the answer") : "");
     const items = g.points.map(p => el("li", { class: p.made ? "yes" : "no" },
       el("span", { class: "ic" }, p.made ? "✓" : "✗"),
@@ -268,6 +269,7 @@
       if (o == null) continue;
       let want;
       if (q.mcq && q.mcq.verdict !== "review") want = q.mcq.verdict === "right" ? o : 0;
+      else if (q.grading && q.grading.diagram) { if (by[i] === "model") { delete marks[i]; delete by[i]; changed = true; } continue; }
       else if (q.grading && !q.grading.empty && q.grading.suggested != null) want = Math.min(q.grading.suggested, o);
       else continue;
       if (marks[i] !== want) { marks[i] = want; by[i] = "model"; changed = true; }

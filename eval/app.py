@@ -36,7 +36,7 @@ from booklet import process
 from grade import grade
 from mcq import check as check_mcq
 from qpaper import read_scheme
-from rubric import is_marking_scheme, make_rubric, marks_scheme, read_marking_scheme, read_questions
+from rubric import is_marking_scheme, make_rubric, marks_scheme, part_marks, read_marking_scheme, read_questions
 
 PORT = 8000
 JOBS_DIR = Path(os.environ.get("SCORESENSE_DATA") or
@@ -173,7 +173,8 @@ def do_paper(test_id: str, files: list[Path]) -> None:
             official = {*made["key"], *made["points"]}
             test.update(key={**test.get("key", {}), **made["key"]}, points={**test.get("points", {}), **made["points"]},
                         mcq=sorted(int(n) for n in made["key"]) or test.get("mcq", []),
-                        scheme=test.get("scheme") or marks_scheme(made["marks"]),
+                        scheme=marks_scheme(part_marks(parse_scheme(test.get("scheme", "")), made))
+                        if test.get("scheme") else marks_scheme(made["marks"]),
                         marking_scheme=[f.name[9:] for f in files],
                         by_ai=[n for n in test.get("by_ai", []) if n not in official])
             save_test(test)
@@ -230,7 +231,16 @@ def queue_sheet(sheet_id: str, files: list[Path]) -> None:
 
 def resume_unfinished() -> None:
     """Queue again the sheets that were waiting or being read when ScoreSense was last closed."""
-    for test_dir in sorted(TESTS_DIR.glob("*/test.json"), key=lambda p: p.stat().st_mtime):
+    tests = sorted(TESTS_DIR.glob("*/test.json"), key=lambda p: p.stat().st_mtime)
+    for test_dir in tests:
+        papers = sorted(test_dir.parent.glob("paper_*"))
+        test = read_json(test_dir, {})
+        if papers and not test.get("question_paper") and not test.get("marking_scheme"):
+            # A question paper uploaded but never read: read first, the sheets need its rubric.
+            paper_jobs[test_dir.parent.name] = {"status": "queued", "message": "Waiting for its turn",
+                                                "started": time.time()}
+            work.put(("paper", test_dir.parent.name, papers))
+    for test_dir in tests:
         for sheet_id in read_json(test_dir, {}).get("sheets", []):
             folder = JOBS_DIR / sheet_id
             if not (folder / "result.json").is_file() and (folder / "uploads").is_dir():

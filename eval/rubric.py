@@ -115,6 +115,9 @@ ROMAN_ITEM = re.compile(r"(?m)^\s*\((?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\)\s*")
 NEEDED = re.compile(r"(?i)\bany\s+(one|two|three|four|five|six)\b")
 WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 MARKS = re.compile(r"\b\d+\s*[xX×]\s*\d+(?:\.\d)?\s*=\s*(\d+(?:\.\d)?)")      # "3X1=3"
+PLUS_MARKS = re.compile(r"(?m)^\s*\d(?:\s*\+\s*\d)+\s*=\s*(\d+)\s*$")           # "1+1=2" on its own line
+ONE_MARK = re.compile(r"\((\d)\)(?=\s)\s*")              # "(1)" after a sub-part's question: its marks
+SECTION = re.compile(r"(?im)^\s*section\s*[-–:]?\s*[a-f]\b.*")                   # the next section's heading
 MARKS_TAIL = re.compile(r"\s*(?:\b\d+(?:-\d+)?\s?[A-Z]\b\s*)?\d+\s*[xX×]\s*\d+(?:\.\d)?\s*=\s*\d+.*$")
 
 
@@ -151,7 +154,7 @@ def split_entries(text: str) -> dict[str, str]:
     return {n: "\n".join(lines).strip() for n, lines in entries.items()}
 
 
-def entry_points(entry: str) -> list[str]:
+def entry_points(entry: str, part: bool = False) -> list[str]:
     """The value points of one entry: its (i), (ii)... items, both alternatives of an OR."""
     items = ROMAN_ITEM.split(entry)[1:]
     if items:
@@ -164,6 +167,13 @@ def entry_points(entry: str) -> list[str]:
             if item and not re.match(r"(?i)any other relevant", item):
                 out.append(item)
         return out
+    # A short sub-part answer, "Why was Hickey persecuted? (1) He published gossip...": the answer is
+    # what follows the marks.
+    m = ONE_MARK.search(entry) if part else None
+    if m:
+        answer = re.sub(r"\s+", " ", entry[m.end():]).strip()
+        if answer and len(answer) < 400:
+            return [answer]
     out = chat(JUDGE_MODEL, EXTRACT_PROMPT.format(entry=entry), POINTS_SCHEMA)   # an answer without (i), (ii)
     return [re.sub(r"\s+", " ", str(p)).strip() for p in out.get("points", []) if str(p).strip()
             and not re.match(r"(?i)any other relevant", str(p))]
@@ -195,6 +205,11 @@ def scheme_from_text(text: str, mcq: Optional[list[int]], progress: Callable[[st
     key, points, marks = {}, {}, {}
     for i, (n, entry) in enumerate(entries.items(), 1):
         progress(f"Taking the points: question {n} ({i} of {len(entries)})")
+        entry = SECTION.split(entry)[0].strip()
+        if f"{n}.1" in entries:
+            continue                    # a case-based question's source passage: its parts have the points
+        if re.search(r"(?i)\boutline\s+map\b|\bmap\s+skill", entry[:300]):
+            continue                    # a map question: marked by the teacher on the map
         option = re.match(r"\s*\(([A-D])\)", entry)
         if "." not in n and (int(n) in mcq if mcq is not None else bool(option)):
             m = option or re.search(r"\(([A-D])\)", entry)
@@ -202,14 +217,37 @@ def scheme_from_text(text: str, mcq: Optional[list[int]], progress: Callable[[st
                 key[n] = m.group(1)
             marks[n] = 1
             continue
-        m = MARKS.search(entry)
+        m = MARKS.search(entry) or PLUS_MARKS.search(entry) or ("." in n and ONE_MARK.search(entry))
         if m:
             marks[n] = float(m.group(1))
-        made = entry_points(entry)
+        made = entry_points(entry, "." in n)
         if made:
             m = NEEDED.search(entry)
             points[n] = {"points": made[:20], "needed": WORDS[m.group(1).lower()] if m else None}
     return {"key": key, "points": points, "marks": marks}
+
+
+def part_marks(scheme: dict[str, float], made: dict) -> dict[str, float]:
+    """The marks of each case-based sub-part, added to the test's marks scheme ({"34": 4} gets "34.1": 1...).
+    A part whose marks the scheme doesn't print gets its "Any two points" count, and else an equal share of
+    what is left of the question's total."""
+    out = dict(scheme)
+    parts: dict[str, list[str]] = {}
+    for n in {*made["marks"], *made["points"]}:
+        if "." in n:
+            parts.setdefault(n.split(".")[0], []).append(n)
+    for main, ns in parts.items():
+        got = {n: made["marks"][n] for n in ns if n in made["marks"]}
+        for n in ns:
+            if n not in got and (made["points"].get(n) or {}).get("needed"):
+                got[n] = float(made["points"][n]["needed"])
+        rest = [n for n in ns if n not in got]
+        if rest and main in scheme:
+            share = (scheme[main] - sum(got.values())) / len(rest)
+            if share > 0:
+                got.update({n: round(share * 2) / 2 for n in rest})
+        out.update({n: v for n, v in got.items() if n not in scheme})
+    return out
 
 
 def marks_scheme(marks: dict[str, float]) -> str:
