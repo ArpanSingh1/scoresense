@@ -160,7 +160,7 @@ def check(result: dict, crops_dir: Path, mcq: list[int], key: dict[str, str],
           progress: Callable[[str], None] = print) -> dict:
     """Add an "mcq" entry to each keyed MCQ question in result (in place) and return it."""
     todo = [q for q in result["questions"]
-            if q["number"] in key and int(q["number"].split(".")[0]) in mcq and q["crops"]]
+            if q["number"] in key and int(q["number"].split(".")[0]) in mcq and q["crops"] and not q.get("part_of")]
     for i, q in enumerate(todo, 1):
         progress(f"Checking multiple-choice answers: {i} of {len(todo)}")
         r = read_question(crops_dir, q["crops"])

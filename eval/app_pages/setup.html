@@ -130,28 +130,50 @@
     for (const k of kids) e.append(k);
     return e;
   }
+  // "1-20" -> [1, ..., 20]; MCQ parts of a question "7.1-7.5" -> ["7.1", ..., "7.5"]
+  const numKey = n => String(n).split(".").map(Number);
+  const byNum = (a, b) => { const x = numKey(a), y = numKey(b); return x[0] - y[0] || (x[1] || 0) - (y[1] || 0); };
   const parseList = t => [...new Set(t.split(/[,\s]+/).flatMap(p => {
-    const m = p.match(/^(\d+)(?:-(\d+))?$/);
+    const m = p.match(/^(\d+)(?:\.(\d+))?(?:-(?:\d+\.)?(\d+))?$/);
     if (!m) return [];
-    const a = +m[1], b = m[2] ? +m[2] : a;
+    if (m[2]) {
+      const a = +m[2], b = m[3] ? +m[3] : a;
+      return b >= a && b - a < 30 ? Array.from({ length: b - a + 1 }, (_, i) => `${m[1]}.${a + i}`) : [];
+    }
+    const a = +m[1], b = m[3] ? +m[3] : a;
     return b >= a && b - a < 200 ? Array.from({ length: b - a + 1 }, (_, i) => a + i) : [];
-  }))].sort((a, b) => a - b);
+  }))].sort(byNum);
   const listText = ns => {
     const out = [];
+    const next = (x, y) => { const a = numKey(x), b = numKey(y);
+      return a.length === b.length && (a.length === 1 ? b[0] === a[0] + 1 : b[0] === a[0] && b[1] === a[1] + 1); };
     for (let i = 0; i < ns.length; i++) {
       let j = i;
-      while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
-      out.push(i === j ? `${ns[i]}` : `${ns[i]}-${ns[j]}`);
+      while (j + 1 < ns.length && next(ns[j], ns[j + 1])) j++;
+      out.push(i === j ? `${ns[i]}` : `${ns[i]}-${String(ns[j]).split(".").pop()}`);
       i = j;
     }
     return out.join(", ");
   };
-  function schemeSum(text) {
-    let sum = 0;
+  // {number: marks} as the server reads it: ranges of questions, parts "3.1-3.5", and "3:4" = the most
+  // a question's parts add up to ("any four of five").
+  function schemeItems(text) {
+    const out = {};
     for (const part of text.split(/[,;\n]+/)) {
-      const m = part.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-\s*(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)$/);
-      if (m) sum += (m[2] ? +m[2] - +m[1] + 1 : 1) * +m[3];
+      const m = part.trim().match(/^(\d+)(?:\.(\d+))?\s*(?:-\s*(?:\d+\.)?(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)$/);
+      if (!m) continue;
+      if (m[2] && m[3]) for (let k = +m[2]; k <= +m[3]; k++) out[`${m[1]}.${k}`] = +m[4];
+      else if (m[3]) for (let n = +m[1]; n <= +m[3]; n++) out[String(n)] = +m[4];
+      else out[m[2] ? `${m[1]}.${m[2]}` : m[1]] = +m[4];
     }
+    return out;
+  }
+  function schemeSum(text) {
+    const items = schemeItems(text), parts = {};
+    for (const [n, v] of Object.entries(items)) if (n.includes(".")) parts[n.split(".")[0]] = (parts[n.split(".")[0]] || 0) + v;
+    let sum = 0;
+    for (const [n, v] of Object.entries(items)) if (!n.includes(".")) sum += n in parts ? Math.min(v, parts[n]) : v;
+    for (const [m, v] of Object.entries(parts)) if (!(m in items)) sum += v;
     return sum;
   }
 
@@ -168,9 +190,12 @@
   }
   let pending = {};
 
+  // Whole-question MCQs (numbers) and MCQ parts of a question ("7.3"), in paper order.
+  const allMcq = () => [...(test.mcq || []), ...(test.mcq_parts || [])].sort(byNum);
+
   function drawKeys() {
     test.key = test.key || {};
-    $("keys").replaceChildren(...(test.mcq || []).map(n => {
+    $("keys").replaceChildren(...allMcq().map(n => {
       const row = el("div", { class: "krow" }, el("b", {}, "Q" + n));
       if (byAi.has(String(n))) row.title = "Written by ScoreSense: check it";
       for (const o of OPTIONS) {
@@ -181,20 +206,16 @@
       if (byAi.has(String(n))) row.append(el("span", { class: "ai" }, "AI"));
       return row;
     }));
-    const done = (test.mcq || []).filter(n => test.key[n]).length;
-    $("key-count").textContent = (test.mcq || []).length ? `${done} of ${test.mcq.length} answers set` : "Type the MCQ question numbers, e.g. 1-20";
+    const all = allMcq(), done = all.filter(n => test.key[n]).length;
+    $("key-count").textContent = all.length ? `${done} of ${all.length} answers set` : "Type the MCQ question numbers, e.g. 1-20 (parts: 7.1-7.5)";
   }
 
   // Written questions: in the marks scheme, not MCQs. "1-20:1, 21-24:2" -> [["21", 2], ...]
   function writtenQuestions() {
-    const out = [], mcq = new Set((test.mcq || []).map(String));
-    for (const part of ($("scheme").value || "").split(/[,;\n]+/)) {
-      const m = part.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-\s*(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)$/);
-      if (!m) continue;
-      if (m[2]) for (let n = +m[1]; n <= +m[2]; n++) out.push([String(n), +m[3]]);
-      else out.push([m[1], +m[3]]);
-    }
-    return out.filter(([n]) => !mcq.has(n));
+    const mcq = new Set(allMcq().map(String));
+    const items = Object.entries(schemeItems($("scheme").value || ""));
+    const withParts = new Set(items.filter(([n]) => n.includes(".")).map(([n]) => n.split(".")[0]));
+    return items.filter(([n]) => !mcq.has(n) && !withParts.has(n)).sort(([a], [b]) => byNum(a, b));
   }
 
   function drawPoints() {
@@ -251,7 +272,7 @@
     byAi = new Set(test.by_ai || []);
     qtext = test.question_text || {};
     $("ai-note").hidden = !byAi.size;
-    if (document.activeElement !== $("mcq")) $("mcq").value = listText(test.mcq || []);
+    if (document.activeElement !== $("mcq")) $("mcq").value = listText(allMcq());
     drawKeys();
     if (!document.activeElement || !document.activeElement.closest("details.pq")) drawPoints();
   }
@@ -275,7 +296,11 @@
   for (const k of ["name", "subject", "class_name", "date"]) $(k).oninput = () => save({ [k]: $(k).value });
   $("scheme").oninput = () => { $("sum").textContent = schemeSum($("scheme").value); save({ scheme: $("scheme").value }); };
   $("scheme").onchange = drawPoints;
-  $("mcq").onchange = () => { test.mcq = parseList($("mcq").value); $("mcq").value = listText(test.mcq); drawKeys(); drawPoints(); save({ mcq: test.mcq }); };
+  $("mcq").onchange = () => {
+    const all = parseList($("mcq").value);
+    test.mcq = all.filter(n => typeof n === "number"); test.mcq_parts = all.filter(n => typeof n === "string");
+    $("mcq").value = listText(all); drawKeys(); drawPoints(); save({ mcq: all });
+  };
   $("checked").onclick = () => { test.by_ai = []; show(); save({ checked: true }); };
   poll();
 </script>
