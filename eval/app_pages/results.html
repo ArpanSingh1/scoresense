@@ -142,12 +142,19 @@
   function parseScheme(text) {
     const s = { exact: {}, ranges: [] };
     for (const part of text.split(/[,;\n]+/)) {
-      const m = part.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-\s*(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)$/);
+      // "1-20:1", "34.1:1", or a question's parts "3.1-3.5:1" (with "3:4", the most they add up to)
+      const m = part.trim().match(/^(\d+)(?:\.(\d+))?\s*(?:-\s*(?:\d+\.)?(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)$/);
       if (!m) continue;
-      if (m[2]) s.ranges.push([+m[1], +m[2], +m[3]]);
-      else s.exact[m[1]] = +m[3];
+      if (m[2] && m[3]) for (let k = +m[2]; k <= +m[3]; k++) s.exact[`${m[1]}.${k}`] = +m[4];
+      else if (m[3]) s.ranges.push([+m[1], +m[3], +m[4]]);
+      else s.exact[m[2] ? `${m[1]}.${m[2]}` : m[1]] = +m[4];
     }
     return s;
+  }
+  // A question's parts add up to at most its own marks when the scheme gives both ("any four of five").
+  function capFor(number) {
+    const main = number.split(".")[0];
+    return number.includes(".") && main in scheme.exact ? scheme.exact[main] : null;
   }
   function outOf(number) {
     if (number in scheme.exact) return scheme.exact[number];
@@ -163,11 +170,20 @@
   function updateTotal() {
     const qs = markables();
     let got = 0, max = 0, left = 0;
+    const capped = {};                                   // main number -> [got, max] of its parts
     for (const [q, i] of qs) {
-      const o = outOf(q.number);
-      if (o != null) max += o;
-      if (marks[i] == null) left++; else got += marks[i];
+      const o = outOf(q.number), cap = capFor(q.number);
+      if (cap != null) {
+        const c = capped[q.number.split(".")[0]] ??= [0, 0, cap];
+        if (o != null) c[1] += o;
+        if (marks[i] != null) c[0] += marks[i];
+      } else {
+        if (o != null) max += o;
+        if (marks[i] != null) got += marks[i];
+      }
+      if (marks[i] == null) left++;
     }
+    for (const [g, m, cap] of Object.values(capped)) { got += Math.min(g, cap); max += Math.min(m, cap); }
     $("total").replaceChildren("Total ", el("b", {}, fmt(got)), max ? ` / ${fmt(max)}` : "",
       el("span", { class: "muted" }, left ? ` · ${left} left` : " · all marked"));
     for (const [q, i] of qs) {
@@ -249,6 +265,7 @@
     const made = g.made > g.needed ? `${g.made} points made (${g.needed} needed for full marks)` : `${g.made} of ${g.needed} points made`;
     const head = el("div", { class: "head" }, el("b", {}, made),
       g.diagram ? el("span", { style: "color:var(--warn)" }, `Has a diagram: please look at the drawing and mark it (at least ${fmt(g.suggested)} / ${fmt(g.out_of)} from the words)`)
+        : g.short ? el("span", { style: "color:var(--warn)" }, `Short answer: one misread word decides it, please check the writing (${fmt(g.suggested)} / ${fmt(g.out_of)} from what was read)`)
         : g.suggested != null ? el("span", {}, `Suggested: ${fmt(g.suggested)} / ${fmt(g.out_of)}`) : "",
       g.empty ? el("span", { style: "color:var(--warn)" }, "No answer text could be read: please look at the answer") : "");
     const items = g.points.map(p => el("li", { class: p.made ? "yes" : "no" },
@@ -269,7 +286,7 @@
       if (o == null) continue;
       let want;
       if (q.mcq && q.mcq.verdict !== "review") want = q.mcq.verdict === "right" ? o : 0;
-      else if (q.grading && q.grading.diagram) { if (by[i] === "model") { delete marks[i]; delete by[i]; changed = true; } continue; }
+      else if (q.grading && (q.grading.diagram || q.grading.short)) { if (by[i] === "model") { delete marks[i]; delete by[i]; changed = true; } continue; }
       else if (q.grading && !q.grading.empty && q.grading.suggested != null) want = Math.min(q.grading.suggested, o);
       else continue;
       if (marks[i] !== want) { marks[i] = want; by[i] = "model"; changed = true; }

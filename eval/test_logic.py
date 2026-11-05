@@ -6,10 +6,11 @@ sheets (SST and maths booklets, 2026-11-03).
 """
 import unittest
 
-from app import needs_look, out_of, parse_scheme
+from app import capped_total, needs_look, out_of, parse_scheme, scheme_total
 from booklet import Crop, assign, merge_pairs, parse, same_number
 from grade import suggest
 from mcq import label_confidence, only_number, strip_number
+from parts import mcq_from_text, split_text
 from points import evidence_found
 from qpaper import check, scheme_text
 from segment import Block
@@ -265,6 +266,36 @@ class Marks(unittest.TestCase):
         self.assertTrue(needs_look({"flags": [], "grading": {**full, "suggested": 2}}))
         self.assertTrue(needs_look({"flags": [], "grading": {**full, "empty": True}}))
 
+
+class HindiParts(unittest.TestCase):
+    def test_parts_split_at_their_labels(self):
+        text = "4. (क) दादाजी अब चल नहीं सकते,\n(ख) कैप्टन द्वारा\n(वा) उससे चलकर आया गया,\n(ध) कर्तृवाच्य\n(इ.) कर्मवाच्य"
+        self.assertEqual([i for i, _ in split_text(text)], [1, 2, 3, 4, 5])   # (वा) is (ग), (ध) (घ), (इ.) (ङ)
+        self.assertEqual(split_text(text)[3][1], "कर्तृवाच्य")
+
+    def test_both_labels_and_the_number_between_them(self):
+        parts = split_text("(i) 9.(क) (A)\n(ii)(ख) (D)\n(iii) (D)")
+        self.assertEqual(parts, [(1, "(A)"), (2, "(D)"), (3, "(D)")])
+
+    def test_restart_at_the_first_label_is_the_next_question(self):
+        parts = split_text("8 (क) a\n(ख) b\n(ग) c\n(i) (A)\n(ii) (D)", restart_ends=True)
+        self.assertEqual(parts[-1][0], 0)
+        self.assertEqual(split_text("(क) a\n(ख) b\n(i) c"), [(1, "a"), (2, "b\n(i) c")])   # else it's text
+
+    def test_mcq_part_with_crossed_out_options_goes_to_the_teacher(self):
+        self.assertEqual(mcq_from_text("(D) I और II", "D")["verdict"], "right")
+        self.assertEqual(mcq_from_text("(A) (C) (D)", "D")["verdict"], "review")
+
+    def test_any_four_of_five(self):
+        s = parse_scheme("1.1-1.3:1, 1.4-1.5:2, 3.1-3.5:1, 3:4, 12:6")
+        self.assertEqual(s["1.5"], 2)
+        self.assertEqual(scheme_total(s), 7 + 4 + 6)
+        self.assertEqual(capped_total([("3.1", 1), ("3.2", 1), ("3.3", 1), ("3.4", 1), ("3.5", 1), ("12", 5)], s), 9)
+
+    def test_hindi_quotes_are_found(self):
+        self.assertTrue(evidence_found("सरल वाक्य", "सरल वाक्य"))
+        self.assertTrue(evidence_found("कर्तृवाच्य", "कर्तृवाच्य"))        # a one-word answer
+        self.assertFalse(evidence_found("the", "the answer is long enough here"))
 
 if __name__ == "__main__":
     unittest.main()

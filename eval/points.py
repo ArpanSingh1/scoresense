@@ -79,12 +79,16 @@ class PointsCheck(TypedDict):
 
 
 def words(s: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", s.lower())
+    """Latin and Devanagari words (the vowel signs of Hindi are part of the word)."""
+    return re.findall(r"[a-z0-9ऀ-ॣ०-ॿ]+", s.lower())
 
 
 def evidence_found(evidence: str, answer: str) -> bool:
-    ev, ans = words(evidence), set(words(answer))
-    return len(ev) >= 2 and sum(w in ans for w in ev) / len(ev) >= MIN_EVIDENCE_MATCH
+    """The quote's words are in the answer. Two words at least, so a lone common word isn't a quote,
+    unless the answer itself is that short ("सरल वाक्य", "कर्तृवाच्य")."""
+    ev, ans = words(evidence), words(answer)
+    least = 1 if len(ans) <= 3 else 2
+    return len(ev) >= least and sum(w in set(ans) for w in ev) / len(ev) >= MIN_EVIDENCE_MATCH
 
 
 def suggest(covered: int, needed: int, marks: float) -> float:

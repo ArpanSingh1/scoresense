@@ -20,6 +20,11 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # 7b vs 3b on 47 real crops + 20 synthetic: 55 vs 51 right (ignoring spaces), multiple-choice
 # option right 15/18 vs 14/18, about 5.5 s vs 4.4 s per answer once loaded (RTX 3050 6 GB).
 MODEL = "qwen2.5vl:7b"
+# All of the model on the GPU: Ollama's own split put 41% of it on the CPU of the 6 GB RTX 3050; forced, it
+# fits (5.2 GB, 4096 context) and reading is about a third faster (Hindi booklet: 6 crops 96 s -> 66 s, a long
+# answer 51 s -> 20 s). Every call to the reading model must use the same options, or Ollama reloads it.
+READER_OPTIONS = {"temperature": 0, "num_ctx": 4096,
+                  "num_gpu": int(os.environ.get("SCORESENSE_NUM_GPU", "99"))}
 # Compared with the one-line prompt on 29 real crops + 20 synthetic: exact 15/29 vs 13/29
 # real, 20/20 vs 19/20 synthetic. Saying "lowercase" for option labels made the model
 # lowercase everything and invent labels, hence the "only if written" wording.
@@ -105,7 +110,7 @@ def read_answer(image_path: str, question_id: str,
         "stream": False,
         "logprobs": True,
         "top_logprobs": 5,
-        "options": {"temperature": 0},
+        "options": READER_OPTIONS,
     }
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",

@@ -26,7 +26,7 @@ import cv2
 import numpy as np
 import pypdfium2 as pdfium
 
-from model import MODEL, OLLAMA_URL
+from model import MODEL, OLLAMA_URL, READER_OPTIONS
 from segment import Block, cut_blocks, find_margin, ink_masks, margin_x, right_margin_x, ruled
 
 PDF_DPI = 150
@@ -84,7 +84,7 @@ def ask(image: np.ndarray, prompt: str) -> tuple[str, Optional[float], Optional[
     and mean token probability."""
     ok, png = cv2.imencode(".png", image)
     body = {"model": MODEL, "stream": False, "logprobs": True,
-            "options": {"temperature": 0, "num_predict": 20},
+            "options": {**READER_OPTIONS, "num_predict": 20},
             "messages": [{"role": "user", "content": prompt, "images": [base64.b64encode(png).decode()]}]}
     if MODEL.startswith("qwen3"):
         body["think"] = False                    # a short answer is wanted, not reasoning
@@ -265,6 +265,12 @@ def assign(crops: list[Crop]) -> list[Question]:
             continue
         number, bracketed = parse(c.label)
         unsure = not sure(c.label, c.confidence)
+        if bracketed and unsure and current is not None:
+            # "(2)" read without confidence: a part label such as (v) or (क) in the margin (Hindi
+            # booklets), not a question number, which students write as "2." or "Q2".
+            c.kind = "note"
+            current.crops.append(c)
+            continue
         cur = current.number if current else "start"
         cur_main = int(cur.split(".")[0]) if cur not in ("?", "start") else None
         # The order is judged from the last number that followed it: a misread one ("ii)" read as

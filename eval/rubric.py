@@ -122,15 +122,38 @@ MARKS_TAIL = re.compile(r"\s*(?:\b\d+(?:-\d+)?\s?[A-Z]\b\s*)?\d+\s*[xX×]\s*\d+(
 
 
 def is_marking_scheme(files: list[Path]) -> bool:
-    """True when the upload is an official marking scheme rather than a question paper."""
+    """True when the upload is an official marking scheme rather than a question paper.
+
+    The PDF's own text decides when it says so: a CBSE question paper prints "Q.P. Code" and "P.T.O.", a
+    marking scheme "Marking Scheme" or "Value Points". Otherwise the model looks at the first pages and
+    most of them must look like a scheme: one page of instructions, or a Hindi paper's page, fooled it."""
+    text = pdf_text(files).lower()
+    if re.search(r"marking\s*scheme|value\s*points|अंकन\s*योजना", text):
+        return True
+    if re.search(r"q\.?\s*p\.?\s*code|p\.\s*t\.\s*o\.|प्रश्न-पत्र\s*कोड", text):
+        return False
     pages = [p for _, ps in load_pages(files) for p in ps][:4]
+    votes = 0
     for img in pages:
         out = chat(MODEL, "Is this page part of an exam MARKING SCHEME (answers or value points for the examiner), "
                           "rather than the question paper students get?", {"type": "object", "properties": {
                               "marking_scheme": {"type": "boolean"}}, "required": ["marking_scheme"]}, img, num_predict=20)
-        if out.get("marking_scheme"):
-            return True
-    return False
+        votes += bool(out.get("marking_scheme"))
+    return votes > len(pages) / 2
+
+
+def pdf_text(files: list[Path]) -> str:
+    """The text layer of the uploaded PDFs ("" for scans and photos)."""
+    out = []
+    for f in files:
+        if f.suffix.lower() == ".pdf":
+            try:
+                import pypdfium2 as pdfium
+                pdf = pdfium.PdfDocument(str(f))
+                out += [pdf[i].get_textpage().get_text_range() for i in range(min(len(pdf), 4))]
+            except Exception:
+                pass
+    return "\n".join(out)
 
 
 def split_entries(text: str) -> dict[str, str]:

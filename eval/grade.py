@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from model import OLLAMA_URL, read_answer
-from points import evidence_found
+from points import evidence_found, words
 
 JUDGE_MODEL = "qwen3-vl:8b-instruct"
 PROMPT = """You are helping a teacher mark a student's exam answer.
@@ -74,6 +74,8 @@ def grade(result: dict, crops_dir: Path, points: dict[str, dict], scheme: dict[s
     todo = [q for q in result["questions"]
             if q["number"] in points and points[q["number"]].get("points") and (only is None or q["number"] == only)]
     for i, q in enumerate(todo, 1):                     # 1. read every answer (the reading model)
+        if q.get("part_of"):
+            continue                                    # a part of a question: its own text is read already
         progress(f"Reading long answers: {i} of {len(todo)}")
         texts = []
         for c in q["crops"]:
@@ -101,7 +103,10 @@ def grade(result: dict, crops_dir: Path, points: dict[str, dict], scheme: dict[s
         # A point about a drawing can't be judged from the transcript: when one is missing and full marks
         # weren't reached in words, the mark is left to the teacher ("diagram"), the suggestion a minimum.
         diagram = made < needed and any(not c["made"] and DIAGRAM.search(c["point"]) for c in checked)
+        # A short answer (a grammar term, a rewritten sentence) that misses: one misread word decides it
+        # ("कर्तृवाच्य" read as "कर्तव्य"), so the teacher looks at the writing instead of a 0 being suggested.
+        short = made < needed and 0 < len(words(q["transcript"])) <= 12
         q["grading"] = {"points": checked, "made": made, "needed": needed, "out_of": marks,
                         "suggested": suggest(made, needed, marks) if marks else None,
-                        "empty": not q["transcript"], "diagram": diagram}
+                        "empty": not q["transcript"], "diagram": diagram, "short": short}
     return result

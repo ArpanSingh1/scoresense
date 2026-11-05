@@ -36,6 +36,7 @@ from booklet import process
 from grade import grade
 from mcq import check as check_mcq
 from qpaper import read_scheme
+from parts import mcq_from_text, recheck_mcq, split as split_parts
 from rubric import is_marking_scheme, make_rubric, marks_scheme, part_marks, read_marking_scheme, read_questions
 
 PORT = 8000
@@ -91,19 +92,52 @@ def sheet_meta(sheet_id: str) -> dict:
     return read_json(JOBS_DIR / sheet_id / "meta.json", {})
 
 
+SCHEME_ITEM = re.compile(r"\s*(\d+)(?:\.(\d+))?\s*(?:-\s*(?:\d+\.)?(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)\s*")
+
+
 def parse_scheme(text: str) -> dict[str, float]:
-    """ "1-20:1, 21-24:2, 34.1:1" -> {"1": 1, ..., "24": 2, "34.1": 1}, the same rules as the pages."""
+    """ "1-20:1, 21-24:2, 34.1:1, 3.1-3.5:1, 3:4" -> {"1": 1, ..., "24": 2, "34.1": 1, "3.1": 1, ..., "3": 4},
+    the same rules as the pages. A question listed with its parts is the most its parts can add up to:
+    "3.1-3.5:1, 3:4" is "any four of the five"."""
     out: dict[str, float] = {}
-    for part in re.split(r"[,;\n]+", text or ""):
-        m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(?:-\s*(\d+))?\s*[:=]\s*(\d+(?:\.\d+)?)\s*", part)
+    for item in re.split(r"[,;\n]+", text or ""):
+        m = SCHEME_ITEM.fullmatch(item)
         if not m:
             continue
-        if m.group(2):
-            for n in range(int(float(m.group(1))), int(m.group(2)) + 1):
-                out[str(n)] = float(m.group(3))
+        main, part, end, value = m.group(1), m.group(2), m.group(3), float(m.group(4))
+        if part and end:                         # parts of one question: "1.1-1.3"
+            for k in range(int(part), int(end) + 1):
+                out[f"{main}.{k}"] = value
+        elif end:
+            for n in range(int(main), int(end) + 1):
+                out[str(n)] = value
         else:
-            out[m.group(1)] = float(m.group(3))
+            out[f"{main}.{part}" if part else main] = value
     return out
+
+
+def scheme_total(scheme: dict[str, float]) -> float:
+    """The paper's total: a question's parts add up, but only to the question's own marks when given."""
+    parts: dict[str, float] = {}
+    for n, v in scheme.items():
+        if "." in n:
+            parts[n.split(".")[0]] = parts.get(n.split(".")[0], 0) + v
+    mains = {n for n in scheme if "." not in n}
+    return sum(min(v, scheme[m]) if m in mains else v for m, v in parts.items()) + \
+        sum(scheme[m] for m in mains if m not in parts)
+
+
+def capped_total(marks: list[tuple[str, float]], scheme: dict[str, float]) -> float:
+    """(question number, mark) pairs added up, the parts of a question to at most its own marks."""
+    by_main: dict[str, float] = {}
+    total = 0.0
+    for number, mark in marks:
+        main = number.split(".")[0]
+        if "." in number and main in scheme:
+            by_main[main] = by_main.get(main, 0) + mark
+        else:
+            total += mark
+    return total + sum(min(v, scheme[m]) for m, v in by_main.items())
 
 
 def out_of(scheme: dict[str, float], number: str) -> Optional[float]:
@@ -135,6 +169,10 @@ def mcq_step(sheet_id: str, job: dict) -> None:
         return
     check_mcq(job["result"], JOBS_DIR / sheet_id / "crops", test.get("mcq", []), test["key"],
               progress=lambda m: job.__setitem__("message", m))
+    for q in job["result"]["questions"]:          # MCQ parts ("7.3"): checked from their own text
+        if q.get("part_of") and q["number"] in test["key"]:
+            q["mcq"] = mcq_from_text(q.get("transcript", ""), test["key"][q["number"]])
+            recheck_mcq(q, JOBS_DIR / sheet_id / "crops")
     job["result"]["mcq_checked"] = True
     write_json(JOBS_DIR / sheet_id / "result.json", job["result"])
 
@@ -156,8 +194,21 @@ def do_sheet(sheet_id: str, files: list[Path]) -> None:
     job["result"] = process(files, JOBS_DIR / sheet_id,
                             progress=lambda m: job.__setitem__("message", m),
                             partial=lambda r: job.__setitem__("result", r))
+    parts_step(sheet_id, job)
     mcq_step(sheet_id, job)
     grade_step(sheet_id, job)
+
+
+def parts_step(sheet_id: str, job: dict) -> None:
+    """Split the answers of questions marked by their parts (Hindi: 1 (i)-(v), 3 (क)-(ङ)) into parts."""
+    test_id = sheet_meta(sheet_id).get("test_id")
+    test = read_json(TESTS_DIR / test_id / "test.json", {}) if test_id else {}
+    scheme = parse_scheme(test.get("scheme", ""))
+    if not any("." in n for n in scheme):
+        return
+    split_parts(job["result"], JOBS_DIR / sheet_id / "crops", scheme, test.get("key", {}),
+                progress=lambda m: job.__setitem__("message", m))
+    write_json(JOBS_DIR / sheet_id / "result.json", job["result"])
 
 
 def do_paper(test_id: str, files: list[Path]) -> None:
@@ -171,18 +222,33 @@ def do_paper(test_id: str, files: list[Path]) -> None:
         with lock:
             test = load_test(test_id)
             official = {*made["key"], *made["points"]}
-            test.update(key={**test.get("key", {}), **made["key"]}, points={**test.get("points", {}), **made["points"]},
-                        mcq=sorted(int(n) for n in made["key"]) or test.get("mcq", []),
-                        scheme=marks_scheme(part_marks(parse_scheme(test.get("scheme", "")), made))
-                        if test.get("scheme") else marks_scheme(made["marks"]),
+            # What the teacher (or an earlier official scheme) set is kept: the scheme replaces only what
+            # the model wrote, and fills what is missing.
+            by_ai = set(test.get("by_ai", []))
+            own_key = {k: v for k, v in test.get("key", {}).items() if k not in by_ai}
+            own_points = {k: v for k, v in test.get("points", {}).items() if k not in by_ai and v.get("points")}
+            scheme = test.get("scheme", "")
+            test.update(key={**test.get("key", {}), **made["key"], **own_key},
+                        points={**test.get("points", {}), **made["points"], **own_points},
+                        mcq=sorted(int(n) for n in made["key"] if "." not in n) or test.get("mcq", []),
+                        scheme=scheme if "." in scheme else
+                        marks_scheme(part_marks(parse_scheme(scheme), made)) if scheme else marks_scheme(made["marks"]),
                         marking_scheme=[f.name[9:] for f in files],
                         by_ai=[n for n in test.get("by_ai", []) if n not in official])
             save_test(test)
         return
+    with lock:
+        test = load_test(test_id)
+        if test.get("marking_scheme") or "." in test.get("scheme", ""):
+            # The rubric came from an official marking scheme, or is marked by parts: the paper is only
+            # recorded, not read again over it.
+            test.update(question_paper=[f.name[9:] for f in files])
+            save_test(test)
+            return
     found = read_scheme(files, progress=say)
     with lock:
         test = load_test(test_id)
-        keep = {k: v for k, v in test.get("key", {}).items() if int(k) in found["mcq"]}
+        keep = {k: v for k, v in test.get("key", {}).items() if "." in k or int(k) in found["mcq"]}
         test.update({k: found[k] for k in ("sections", "scheme", "mcq", "max_marks", "problems", "found_on_page")},
                     key=keep, question_paper=[f.name[9:] for f in files])
         save_test(test)
@@ -278,7 +344,8 @@ def sheet_summary(sheet_id: str, scheme: dict[str, float]) -> dict:
     marks = read_json(JOBS_DIR / sheet_id / "marks.json", {}).get("marks", {})
     result = job.get("result") or {}
     questions = [(i, q) for i, q in enumerate(result.get("questions", [])) if q["number"] != "start"]
-    got = sum(m["mark"] or 0 for m in marks.values() if m.get("mark") is not None)
+    got = capped_total([(str(m.get("number", "")), m["mark"]) for m in marks.values() if m.get("mark") is not None],
+                       scheme)
     marked = {k for k, m in marks.items() if m.get("mark") is not None}
     to_look = sum(1 for i, q in questions if str(i) not in marked and needs_look(q))
     unmarked = sum(1 for i, _ in questions if str(i) not in marked)
@@ -405,7 +472,7 @@ def marks_csv(sheet_id: str):
 
 def test_overview(test: dict) -> dict:
     scheme = parse_scheme(test.get("scheme", ""))
-    total = sum(scheme.values())
+    total = scheme_total(scheme)
     sheets = [sheet_summary(s, scheme) for s in test.get("sheets", [])]
     finished = [s for s in sheets if s["status"] in ("completed", "review")]
     completed = [s for s in sheets if s["status"] == "completed"]
@@ -495,10 +562,13 @@ def edit_test(test_id: str, data: dict = Body(...)):
                 test[k] = str(data[k]).strip()[:200] or test.get(k, "")
         if "scheme" in data:
             test["scheme"] = str(data["scheme"])[:2000]
-        if "mcq" in data:
-            test["mcq"] = sorted({int(n) for n in data["mcq"] if 0 < int(n) < 1000})
+        if "mcq" in data:                       # whole questions (1-20), and MCQ parts of a question ("7.3")
+            items = [str(n).strip() for n in data["mcq"] if re.fullmatch(r"\d{1,3}(?:\.\d{1,2})?", str(n).strip())]
+            test["mcq"] = sorted({int(n) for n in items if "." not in n and 0 < int(n) < 1000})
+            test["mcq_parts"] = sorted({n for n in items if "." in n}, key=lambda n: [int(x) for x in n.split(".")])
         if "key" in data:
-            test["key"] = {str(int(k)): v for k, v in dict(data["key"]).items() if v in OPTIONS}
+            test["key"] = {str(k).strip(): v for k, v in dict(data["key"]).items()
+                           if v in OPTIONS and re.fullmatch(r"\d{1,3}(?:\.\d{1,2})?", str(k).strip())}
         if "points" in data:                    # {"25": {"points": ["...", ...], "needed": 3}}
             test["points"] = {
                 str(n)[:20]: {"points": [str(p).strip()[:500] for p in v.get("points", []) if str(p).strip()][:20],
