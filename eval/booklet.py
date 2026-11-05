@@ -278,6 +278,21 @@ def assign(crops: list[Crop]) -> list[Question]:
         if number and "." in number and cur_main is not None and main not in (cur_main, cur_main + 1)                 and int(number.replace(".", "")) in (cur_main + 1, cur_main + 2):
             number = number.replace(".", "")
             main = int(number)
+        # The same number again after an answer that skipped one (21, then "22" read as 23, then a
+        # clear 23 further on): the first was the skipped number. It takes that number, flagged.
+        prev_main = next((int(x.number.split(".")[0]) for x in reversed(questions[:-1])
+                          if x.number not in ("?", "start")), None)
+        if (same_number(number, cur) and cur_main is not None and prev_main is not None
+                and cur_main == prev_main + 2 and "." not in cur and str(prev_main + 1) not in seen
+                and len(current.crops) >= 2):
+            skipped = str(prev_main + 1)
+            if seen.get(current.number) == current.crops[0].page:
+                del seen[current.number]
+            seen[skipped] = current.crops[0].page
+            current.flags.append(f"read as Q{current.number}, but Q{current.number} starts again on page "
+                                 f"{c.page}: taken as Q{skipped} from the order, check it")
+            current.number, last_good = skipped, prev_main + 1
+            cur, cur_main, order = skipped, prev_main + 1, prev_main + 1
         if same_number(number, cur):             # the same number again: "Ans 6." after "Q6.", or rewritten
             if not (current.unsure and not unsure):
                 c.kind = "question"

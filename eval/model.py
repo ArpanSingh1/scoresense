@@ -40,6 +40,21 @@ ROMAN_NUMERALS = str.maketrans({
     for base in (0x2160, 0x2170)
     for i, s in enumerate(["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"])
 })
+# The model sometimes copies its own instructions into the transcript, in the middle of an answer
+# ("1V = 1J/1C - Copy spelling, capitalisation ... return an empty string. Q.27 (b) ..."): each
+# sentence of the prompt is cut out wherever it appears.
+PROMPT_ECHO = [re.compile(r"\s*-?\s*" + r"\s+".join(map(re.escape, s.split())), re.I)
+               for s in re.split(r"(?<=[.:])\s+|\n", PROMPT.replace("- ", "")) if len(s.split()) >= 3]
+# The CBSE booklet's printed margin label, often cut at the crop's edge ("ice for writing uestion Number").
+PROMPT_ECHO.append(re.compile(r"\s*(?:\w*\s+)?f?or\s+writing\s+\w*\s*Number\b", re.I))
+
+
+def strip_prompt_echo(text: str) -> str:
+    for pattern in PROMPT_ECHO:
+        text = pattern.sub(" ", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
 # Placeholder until a threshold is chosen from score.py's sweep on real labelled crops.
 REVIEW_THRESHOLD = 0.5
 
@@ -100,7 +115,7 @@ def read_answer(image_path: str, question_id: str,
     with urllib.request.urlopen(req, timeout=300) as resp:
         data = json.load(resp)
 
-    text = data["message"]["content"].strip().translate(ROMAN_NUMERALS)
+    text = strip_prompt_echo(data["message"]["content"].strip().translate(ROMAN_NUMERALS))
     kept = [t for t in data.get("logprobs") or [] if t.get("logprob") is not None]
     tokens = [(t.get("token", ""), t["logprob"]) for t in kept]
     # What else the model weighed at each token: an MCQ letter is only in doubt against other letters.
