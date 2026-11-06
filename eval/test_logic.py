@@ -68,6 +68,13 @@ class Grouping(unittest.TestCase):
         self.assertEqual([q.number for q in qs], ["22"])
         self.assertTrue(qs[0].flags)
 
+    def test_unsure_far_number_one_digit_off_the_next_is_taken(self):   # SST booklet: "24" read as 94
+        qs = assign([crop("22"), crop("23"), crop("94", 0.3), crop("37")])
+        self.assertEqual([q.number for q in qs], ["22", "23", "24", "37"])
+        self.assertIn("taken as Q24", qs[2].flags[0])
+        qs = assign([crop("26"), crop("25 b)", 0.3), crop("27")])                  # maths working
+        self.assertEqual([q.number for q in qs], ["26", "27"])
+
     def test_first_number_is_taken_but_flagged_when_unsure(self):
         qs = assign([crop("", None, "continuation"), crop("25 b)", 0.4)])
         self.assertEqual(qs[-1].number, "25")

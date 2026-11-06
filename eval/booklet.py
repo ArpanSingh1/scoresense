@@ -345,6 +345,23 @@ def assign(crops: list[Crop]) -> list[Question]:
                 current, last_point = q, 0
                 continue
         not_number = c.label.strip() in ("-", "–") and not unsure
+        # An unsure two-digit mark one digit off the next question and far from the order ("24" read as 94):
+        # that question, flagged. One close by ("25" after 22) may be working: it is flagged below instead.
+        nxt = str(cur_main + 1) if cur_main is not None else ""
+        if (unsure and not plausible and number and number.isdigit() and len(number) == 2 == len(nxt)
+                and not cur_main < int(number) <= cur_main + 3
+                and sum(a != b for a, b in zip(number, nxt)) == 1 and nxt not in seen
+                and re.fullmatch(r"\s*(?:Q\.?\s*)?\d{2}\s*[.)]?\s*", c.label)
+                and not any(int(nxt) in clear_numbers(x) for x in crops[idx + 1:idx + 4])):
+            c.kind = "question"
+            q = Question(nxt, flags=[f"number read as \"{c.label}\", not for sure: taken as Q{nxt} from the order, "
+                                     f"check it"], unsure=True)
+            seen[nxt] = c.page
+            last_good = int(nxt)
+            questions.append(q)
+            q.crops.append(c)
+            current, last_point = q, 0
+            continue
         if current is not None and (number is None or (unsure and not plausible)):
             c.kind = "note"                      # a word or sign (=>) in the margin, or unsure
             # Flag only a mark that might be a missed question number: it has digits and could
