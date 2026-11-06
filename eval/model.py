@@ -13,6 +13,8 @@ import json
 import math
 import os
 import re
+import time
+import urllib.error
 import urllib.request
 from typing import Optional, TypedDict
 
@@ -129,8 +131,15 @@ def read_answer(image_path: str, question_id: str,
         data=json.dumps(body).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        data = json.load(resp)
+    for attempt in (1, 2):   # the model can stall once (English booklet, while reading parts); one stall
+        try:                 # shouldn't fail the whole booklet
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                data = json.load(resp)
+            break
+        except (TimeoutError, urllib.error.URLError):
+            if attempt == 2:
+                raise
+            time.sleep(5)
 
     text = strip_prompt_echo(data["message"]["content"].strip().translate(ROMAN_NUMERALS))
     kept = [t for t in data.get("logprobs") or [] if t.get("logprob") is not None]

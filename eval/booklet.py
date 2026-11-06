@@ -416,11 +416,14 @@ def fit_to_paper(questions: list[dict], paper: set[int]) -> None:
     main = lambda q: int(q["number"].split(".")[0]) if q["number"].split(".")[0].isdigit() else None
     # An unsure number answered again further on with a clear one (English booklet: "(v)" of Q1 read
     # as 5, the real Q5 later): it was a mark inside the answer before it.
+    def unsure(q: dict) -> bool:
+        mark = next((c for c in q.get("crops", []) if c.get("kind") == "question"), None)
+        return any("but not for sure" in f for f in q["flags"]) or bool(
+            mark and mark.get("confidence") is not None and mark["confidence"] < NUMBER_CONFIDENCE)
+
     for i in range(len(questions) - 1, 0, -1):
         q = questions[i]
-        if (any("but not for sure" in f for f in q["flags"])
-                and any(x["number"] == q["number"] and not any("not for sure" in f for f in x["flags"])
-                        for x in questions[i + 1:])):
+        if unsure(q) and any(x["number"] == q["number"] and not unsure(x) for x in questions[i + 1:]):
             for c in q["crops"]:
                 c["kind"] = "note" if c["kind"] == "question" else c["kind"]
             questions[i - 1]["crops"] += q["crops"]

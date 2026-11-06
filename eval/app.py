@@ -23,6 +23,7 @@ import queue
 import re
 import threading
 import time
+import traceback
 import uuid
 import webbrowser
 from pathlib import Path
@@ -298,6 +299,7 @@ def worker() -> None:
                 do_paper(item, files)
             state.update(status="done", message="")
         except Exception as e:  # shown on the page; the queue goes on with the next sheet
+            traceback.print_exc()                       # into the app's log, to find where it stopped
             state.update(status="failed", message=f"{type(e).__name__}: {e}")
 
 
