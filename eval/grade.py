@@ -112,17 +112,39 @@ def judge(answer: str, point: str, number: str, marks: float) -> dict:
 
 
 ALTERNATIVES = re.compile(r"\s*;\s*(?:अथवा|या फिर|or)\s+", re.I)
+# A point that is a slot for any correct point: "एक अन्य सही बिंदु: पुल्लिंग / बहुवचन", "कोई दूसरा तथ्य: ...".
+OTHER_SLOT = re.compile(r"अन्य\s+सही\s+बिंदु|कोई\s+दूसरा")
+
+
+def sides(point: str) -> list[str]:
+    """The alternatives a point accepts, each with the point's label: "असंभव नहीं, क्योंकि ...; अथवा असंभव
+    है, ...", or short options split by "/" ("एक अन्य सही बिंदु: पुल्लिंग / बहुवचन / कर्म कारक")."""
+    label, _, body = point.partition(":") if ":" in point.split(";")[0] else ("", "", point)
+    parts = ALTERNATIVES.split(body)
+    if len(parts) < 2:
+        # Only " / " with spaces: "1/R = 1/10", "eggs/ova" and "पाते/सकते" are one point.
+        options = [o.strip() for o in re.split(r"\s+/\s+", body)]
+        ok = lambda o: 0 < len(o.split()) <= 8 and o.count("(") == o.count(")") and not re.search(r"\d", o)
+        parts = options if len(options) > 1 and all(map(ok, options)) else [body]
+        # Another ending of the same sentence ("दादाजी अब चल नहीं पाते / नहीं सकते"): the whole sentence.
+        for i in range(1, len(parts)):
+            first, before = parts[i].split()[0], parts[0].split()
+            at = max((k for k, w in enumerate(before) if w == first and k >= len(before) - 3), default=None)
+            if at is not None and len(parts[i].split()) < len(before):
+                parts[i] = " ".join(before[:at] + parts[i].split())
+    if len(parts) < 2:
+        return [point]
+    return [f"{label}: {s.strip()}" if label else s.strip() for s in parts]
 
 
 def judge_any(answer: str, point: str, number: str, marks: float) -> dict:
-    """A point that accepts either side ("असंभव नहीं, क्योंकि ...; अथवा असंभव है, क्योंकि ..."): each side is
-    judged alone, since the judge asked about both at once wants both."""
-    label, _, body = point.partition(":") if ":" in point.split(";")[0] else ("", "", point)
-    sides = ALTERNATIVES.split(body)
-    if len(sides) < 2:
+    """A point that accepts any of its sides: each is judged alone, since the judge asked about all of them
+    at once wants all of them."""
+    options = sides(point)
+    if len(options) < 2:
         return judge(answer, point, number, marks)
-    for side in sides:
-        c = judge(answer, f"{label}: {side}" if label else side, number, marks)
+    for side in options:
+        c = judge(answer, side, number, marks)
         if c["made"]:
             return {**c, "point": point}
     return {**c, "point": point}
@@ -252,12 +274,14 @@ def grade(result: dict, crops_dir: Path, points: dict[str, dict], scheme: dict[s
                 checked.append({"point": p, "made": False, "quote": "", "note": ""})
             else:
                 c = judge_any(q["transcript"], p, q["number"], marks)
-                span = "" if c["made"] else close_match(p, q["transcript"])
+                span = "" if c["made"] else next(
+                    (s for s in (close_match(side, q["transcript"]) for side in sides(p)) if s), "")
                 if span:
                     c.update(made=True, quote=span, note="matched letter by letter: check the writing")
                 checked.append(c)
         made = sum(c["made"] for c in checked)
-        if spec.get("other") and q["transcript"] and made < needed:
+        other = spec.get("other") or any(OTHER_SLOT.search(p) for p in spec["points"])
+        if other and q["transcript"] and made < needed:
             progress(f"Checking other relevant points: question {q['number']}")
             checked += judge_other(q["transcript"], spec.get("question", ""), spec["points"], q["number"], marks,
                                    [c["quote"] for c in checked if c["made"]], needed - made)

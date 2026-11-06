@@ -8,7 +8,7 @@ import unittest
 
 from app import capped_total, needs_look, out_of, parse_scheme, scheme_total
 from booklet import Crop, assign, fit_to_paper, merge_pairs, parse, same_number
-from grade import close_match, other_points, split_by_text, suggest
+from grade import OTHER_SLOT, close_match, other_points, sides, split_by_text, suggest
 from mcq import label_confidence, only_number, strip_number
 from parts import mcq_from_text, split, split_text
 from points import evidence_found
@@ -205,6 +205,23 @@ class TextNumbers(unittest.TestCase):
         self.assertTrue(all(g["other"] and g["made"] for g in got))
         self.assertEqual(other_points(found, answer, ["Agenda 21 was adopted by all."], 1)[0]["point"],
                          "Other relevant point: Climate")
+
+
+class PointSides(unittest.TestCase):
+    def test_options_are_judged_one_by_one(self):
+        self.assertEqual(sides("एक अन्य सही बिंदु: पुल्लिंग/स्त्रीलिंग / बहुवचन / कर्म कारक"),
+                         ["एक अन्य सही बिंदु: पुल्लिंग/स्त्रीलिंग", "एक अन्य सही बिंदु: बहुवचन", "एक अन्य सही बिंदु: कर्म कारक"])
+        self.assertEqual(sides("तर्कपूर्ण उत्तर: असंभव नहीं; अथवा असंभव है"),
+                         ["तर्कपूर्ण उत्तर: असंभव नहीं", "तर्कपूर्ण उत्तर: असंभव है"])
+        self.assertEqual(sides("कर्तृवाच्य: दादाजी अब चल नहीं पाते / नहीं सकते"),
+                         ["कर्तृवाच्य: दादाजी अब चल नहीं पाते", "कर्तृवाच्य: दादाजी अब चल नहीं सकते"])
+        self.assertTrue(OTHER_SLOT.search("एक अन्य सही बिंदु: हर्षसूचक"))
+
+    def test_formulas_and_word_pairs_stay_whole(self):
+        for p in ("10 Ω and 15 Ω are in parallel: 1/R = 1/10 + 1/15, R = 6 Ω.", "Ovary: produces eggs/ova",
+                  "Observations: bubbles of gas are evolved, metal melts/dissolves",
+                  "आज के बच्चों का प्रकृति से संबंध: विस्तृत उत्तर (जैसे शहरों, मोबाइल / सोशल मीडिया के कारण दूरी)"):
+            self.assertEqual(sides(p), [p])
 
 
 class MergeLines(unittest.TestCase):
