@@ -66,8 +66,12 @@ def line_x(img: np.ndarray) -> int | None:
     # A printed line is a few pixels wide; the scanner's shadow at the page edge is a wide strip.
     strong = np.concatenate([[0], (cols >= h * 0.5).astype(np.int8), [0]])
     starts, ends = np.where(np.diff(strong) == 1)[0], np.where(np.diff(strong) == -1)[0]
-    thin = [a + int(np.argmax(cols[a:b])) for a, b in zip(starts, ends) if b - a <= w * 0.012]
-    return int(w * 0.04) + int(thin[0]) if thin else None
+    thin = [a + int(np.argmax(cols[a:b])) for a, b in zip(starts, ends) if b - a <= w * 0.016]
+    # Two lines (English booklet: the page's border at 8%, the margin line at 14%): the question
+    # numbers sit between them, so the margin is the one on the right. Past 18% a line is in the
+    # writing, not the margin.
+    thin = [x for x in thin if int(w * 0.04) + x <= w * 0.18] or thin[:1]
+    return int(w * 0.04) + int(thin[-1]) if thin else None
 
 
 def find_margin(img: np.ndarray) -> int | None:
