@@ -118,30 +118,28 @@ def orient(pages: list[np.ndarray]) -> int:
     """Rotation (anticlockwise degrees) that makes this file's pages upright.
 
     The margin line must run down the page: that leaves two candidates, 180 degrees apart.
-    The model reads a line of handwriting both ways round and the more confident reading wins.
+    The model reads three lines of handwriting both ways round and the more confident readings win.
+    Which side the margin line is found on doesn't decide it: booklets ruled on both sides have one
+    line found only upside down (English booklet: the right-hand line, with the left one missed).
     Scanned booklets come through one way round, so one page decides for the whole file."""
     for img in pages:
         upright = [d for d in ROTATIONS if margin_x(ink_masks(rotate(img, d))[1]) is not None]
         if not upright:
             continue
         a = upright[0] % 180
-        # The margin line is on the left: when only one way round has it there, that decides.
-        candidates = [d for d in (a, a + 180) if d in upright]
-        if len(candidates) == 1:
-            return candidates[0]
         test = rotate(img, a)
         pen, _ = ink_masks(test)
         rows = np.where(pen.sum(axis=1) > pen.shape[1] * 0.02)[0]
         if not len(rows):
             continue
-        y = int(np.median(rows))
         h = test.shape[0]
-        strip = test[max(0, y - h // 30): y + h // 30]
-        means = []
-        for s in (strip, cv2.rotate(strip, cv2.ROTATE_180)):
-            _, _, mean = ask(s, "Transcribe this line of handwriting. Return only the text.")
-            means.append(mean or 0)
-        return candidates[int(means[1] > means[0])]
+        score = [0.0, 0.0]
+        for q in (25, 50, 75):
+            y = int(np.percentile(rows, q))
+            strip = test[max(0, y - h // 30): y + h // 30]
+            for k, s in enumerate((strip, cv2.rotate(strip, cv2.ROTATE_180))):
+                score[k] += ask(s, "Transcribe this line of handwriting. Return only the text.")[2] or 0
+        return (a, a + 180)[int(score[1] > score[0])]
     return 0
 
 
