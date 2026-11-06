@@ -41,7 +41,9 @@ NUMBER_PROMPT = (
 NUMBER_CONFIDENCE = 0.5
 CIRCLED = {chr(0x2460 + i): f"({i + 1})" for i in range(20)}
 # A handwritten Q is often read as 0 ("016." for "Q16."), so up to three digits, leading zero dropped.
-LABEL = re.compile(r"^\s*(?:Q\.?|A[nmu]s\.?)?\s*(\(?)\s*(\d{1,3})(?!\d)(?:\s*\.\s*(\d))?")
+LABEL = re.compile(r"^\s*(?:Q\.?|A[nmu]s\.?)?\s*(\(?)\s*(\d{1,3})(?![\dIVXivx])(?:\s*\.\s*(\d))?")
+# "11) b)", a question with a choice, read as the part label "ii) b)": the number, when it comes next.
+II_CHOICE = re.compile(r"^\s*[il]{2}\s*\)\s*\(?\s*[ab]\s*\)")
 # "Q.25)" is often read as "8.25", "9.25" or "0.25": a lone 8, 9 or 0 and a dot before the number.
 Q_AS_DIGIT = re.compile(r"^\s*\(?\s*[890]\s*(?:[.,]\s*(\d{1,2})|(\d{2}))(?!\d)")
 
@@ -186,6 +188,8 @@ def q_reading(label: str) -> tuple[Optional[str], bool]:
 def parse(label: str) -> tuple[Optional[str], bool]:
     """(question number such as "13" or "34.1", written in brackets) from what the model read."""
     label = "".join(CIRCLED.get(c, c) for c in label)
+    if II_CHOICE.match(label):
+        return "11", False
     m = LABEL.match(label)
     if not m:
         return None, False
@@ -410,10 +414,44 @@ def fit_to_paper(questions: list[dict], paper: set[int]) -> None:
     """A number that is not in the paper ("31" read as 71) takes the one unanswered number that fits
     between its neighbours (30 and 33 -> 31), flagged; with none or several, it is only flagged."""
     main = lambda q: int(q["number"].split(".")[0]) if q["number"].split(".")[0].isdigit() else None
+    # An unsure number answered again further on with a clear one (English booklet: "(v)" of Q1 read
+    # as 5, the real Q5 later): it was a mark inside the answer before it.
+    for i in range(len(questions) - 1, 0, -1):
+        q = questions[i]
+        if (any("but not for sure" in f for f in q["flags"])
+                and any(x["number"] == q["number"] and not any("not for sure" in f for f in x["flags"])
+                        for x in questions[i + 1:])):
+            for c in q["crops"]:
+                c["kind"] = "note" if c["kind"] == "question" else c["kind"]
+            questions[i - 1]["crops"] += q["crops"]
+            del questions[i]
+            for x in questions:
+                x["flags"] = [f for f in x["flags"] if f != f"Q{q['number']} was already answered on page "
+                              f"{q['crops'][0]['page']}" and "comes after" not in f]
     answered = {main(q) for q in questions}
+    # Answers before the first number, written as parts (i), (ii)... (English booklet: the reading
+    # passages are answered without "1."): Q1 when the paper has it and it is nowhere else.
+    if (questions and questions[0]["number"] == "start" and 1 in paper and 1 not in answered
+            and sum(bool(re.match(r"^\s*\(?\s*(?:i|ii|iii|iv|v)\s*\)", c.get("label") or ""))
+                    for c in questions[0]["crops"]) >= 2):
+        questions[0]["number"] = "1"
+        questions[0]["flags"].append("no question number written: taken as Q1 from its parts (i), (ii)..., "
+                                     "check it")
+        answered.add(1)
     for i, q in enumerate(questions):
         m = main(q)
         if m is None or m in paper:
+            continue
+        before = next((main(x) for x in reversed(questions[:i]) if main(x) in paper), 0)
+        after = next((main(x) for x in questions[i + 1:] if main(x) in paper), max(paper) + 1)
+        # "3]" read as 31 (between Q1 and Q4): a closing bracket taken for a 1 (or a 7).
+        d = int(str(m)[0])
+        if len(str(m)) == 2 and str(m)[1] in "17" and d in paper and d not in answered and before < d < after:
+            q["flags"] = [f for f in q["flags"] if "comes after" not in f]
+            q["flags"].append(f"read as Q{m}, which is not in the paper: taken as Q{str(m)[0]} (a bracket "
+                              f"after the number read as a digit), check it")
+            q["number"] = str(m)[0]
+            answered.add(int(q["number"]))
             continue
         before = next((main(x) for x in reversed(questions[:i]) if main(x) in paper), 0)
         after = next((main(x) for x in questions[i + 1:] if main(x) in paper), max(paper) + 1)

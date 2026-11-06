@@ -135,6 +135,21 @@ class Grouping(unittest.TestCase):
         fit_to_paper(qs, set(range(1, 38)))
         self.assertEqual(qs[1]["number"], "13")
 
+    def test_english_booklet_numbers(self):          # no "1.", "3]" read as 31, "(v)" read as 5 unsure
+        qs = [{"number": "start", "flags": [], "crops": [{"page": 2, "label": "(i)", "kind": "note"},
+                                                        {"page": 2, "label": "ii)", "kind": "note"}]},
+              {"number": "5", "flags": ['number read as "5", but not for sure: check it'],
+               "crops": [{"page": 3, "label": "5", "kind": "question"}]},
+              {"number": "31", "flags": [], "crops": [{"page": 7, "label": "31", "kind": "question"}]},
+              {"number": "4", "flags": ["Q4 comes after Q31: check"], "crops": [{"page": 9}]},
+              {"number": "5", "flags": ["Q5 was already answered on page 3"], "crops": [{"page": 11}]}]
+        fit_to_paper(qs, set(range(1, 12)))
+        self.assertEqual([q["number"] for q in qs], ["1", "3", "4", "5"])
+        self.assertEqual(len(qs[0]["crops"]), 3)
+        self.assertEqual(qs[3]["flags"], [])
+        self.assertEqual(parse("9V"), (None, False))                     # "(iV)": a part, not Q9
+        self.assertEqual(parse("ii) b)"), ("11", False))                 # "11) b)"
+
     def test_skipped_section_flags_the_jump_only(self):  # SST booklet: 18, 25-36, then 21-23 at the end
         qs = assign([crop("17"), crop("18"), crop("25"), crop("26"), crop("27"), crop("29"), crop("36"),
                      crop("21"), crop("22")])
