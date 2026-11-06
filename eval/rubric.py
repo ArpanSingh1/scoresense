@@ -202,6 +202,22 @@ def entry_points(entry: str, part: bool = False) -> list[str]:
             and not re.match(r"(?i)any other relevant", str(p))]
 
 
+OTHER_POINT = re.compile(r"(?i)any\s+other\s+(?:relevant|correct|valid)\s+(?:point|answer)")
+
+
+def entry_extras(entry: str) -> dict:
+    """What the judge needs besides the points: the question as printed above them ("Explain any two
+    outcomes of the Summit."), and "other": True when the scheme accepts "Any other relevant point"."""
+    out = {}
+    question = re.split(r"(?m)^\s*\((?:i|1)\)", ROMAN_ITEM.split(entry)[0])[0]
+    question = re.sub(r"\s+", " ", ONE_MARK.split(question)[0]).strip()
+    if 0 < len(question) <= 300 and question.endswith(("?", ".")):
+        out["question"] = question
+    if OTHER_POINT.search(entry):
+        out["other"] = True
+    return out
+
+
 def read_marking_scheme(files: list[Path], mcq: Optional[list[int]], progress: Callable[[str], None] = print,
                         save_text: Optional[Path] = None) -> dict:
     """The rubric copied from an official marking scheme: {"key": {...}, "points": {...}}, as make_rubric.
@@ -247,6 +263,7 @@ def scheme_from_text(text: str, mcq: Optional[list[int]], progress: Callable[[st
         if made:
             m = NEEDED.search(entry)
             points[n] = {"points": made[:20], "needed": WORDS[m.group(1).lower()] if m else None}
+            points[n].update(entry_extras(entry))
     return {"key": key, "points": points, "marks": marks}
 
 

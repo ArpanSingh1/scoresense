@@ -32,7 +32,7 @@ import uvicorn
 from fastapi import Body, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from booklet import process
+from booklet import fit_to_paper, process
 from grade import grade
 from mcq import check as check_mcq
 from qpaper import read_scheme
@@ -194,9 +194,21 @@ def do_sheet(sheet_id: str, files: list[Path]) -> None:
     job["result"] = process(files, JOBS_DIR / sheet_id,
                             progress=lambda m: job.__setitem__("message", m),
                             partial=lambda r: job.__setitem__("result", r))
+    paper_step(sheet_id, job)
     parts_step(sheet_id, job)
     mcq_step(sheet_id, job)
     grade_step(sheet_id, job)
+
+
+def paper_step(sheet_id: str, job: dict) -> None:
+    """Numbers the paper doesn't have ("31" read as 71): taken from the order when only one fits."""
+    test_id = sheet_meta(sheet_id).get("test_id")
+    test = read_json(TESTS_DIR / test_id / "test.json", {}) if test_id else {}
+    paper = {int(n.split(".")[0]) for n in parse_scheme(test.get("scheme", "")) if n.split(".")[0].isdigit()}
+    if not paper:
+        return
+    fit_to_paper(job["result"]["questions"], paper)
+    write_json(JOBS_DIR / sheet_id / "result.json", job["result"])
 
 
 def parts_step(sheet_id: str, job: dict) -> None:
@@ -334,7 +346,8 @@ def get_job(sheet_id: str) -> dict:
 
 def needs_look(q: dict) -> bool:
     g = q.get("grading")
-    partial = bool(g and (g["empty"] or g["suggested"] is None or g["suggested"] < g["out_of"]))
+    partial = bool(g and (g["empty"] or g["suggested"] is None or g["suggested"] < g["out_of"]
+                          or any(p.get("other") for p in g.get("points", []))))
     return bool(q.get("flags")) or bool(q.get("mcq") and q["mcq"]["verdict"] != "right") or partial
 
 

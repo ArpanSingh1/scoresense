@@ -357,8 +357,10 @@ def assign(crops: list[Crop]) -> list[Question]:
             current.crops.append(c)
             continue
         ref = last_good if last_good is not None else cur_main
-        if current is not None and number in seen and ref is not None and main < ref - 5:
-            c.kind = "note"                      # "(b)" read as 6, "ii)" as 11, well after Q6 and Q11
+        # A small number already answered, well after it: "(b)" read as 6, "ii)" as 11, after Q6 and Q11.
+        # A bigger one (21 at the end, after Q36) is the student answering a skipped section again.
+        if current is not None and number in seen and ref is not None and main < ref - 5 and main <= 12:
+            c.kind = "note"
             current.crops.append(c)
             continue
         c.kind = "question"
@@ -372,14 +374,67 @@ def assign(crops: list[Crop]) -> list[Question]:
         if unsure and cur_main is None and q.number != "?":
             q.flags.append(f"number read as \"{c.label}\", but not for sure: check it")
             q.unsure = True
-        if ref is not None and q.number != "?" and not (ref < main <= ref + 2) and (main < ref or main > ref + 5):
-            q.flags.append(f"Q{q.number} comes after Q{ref}: check the number (it may be answered out of order)")
+        # Out of order: it follows neither of the last two answers, and is far from both the order and
+        # the answer before it. A student who skipped a section (18, 25, 26, 27 ... 36, 21) gets a flag
+        # on the jump, not on every answer after it.
+        out = lambda r: r is None or (not (r < main <= r + 2) and (main < r or main > r + 5))
+        follows = any(r is not None and r < main <= r + 2 for r in (cur_main, prev_main))
+        if (ref is not None and q.number != "?" and not follows and out(ref) and out(cur_main)
+                and not q.flags):
+            q.flags.append(f"Q{q.number} comes after Q{cur_main if cur_main is not None else ref}: "
+                           f"check the number (it may be answered out of order)")
         elif q.number != "?":
             last_good = main
         questions.append(q)
         q.crops.append(c)
         current, last_point = q, 0
     return questions
+
+
+def fit_to_paper(questions: list[dict], paper: set[int]) -> None:
+    """A number that is not in the paper ("31" read as 71) takes the one unanswered number that fits
+    between its neighbours (30 and 33 -> 31), flagged; with none or several, it is only flagged."""
+    main = lambda q: int(q["number"].split(".")[0]) if q["number"].split(".")[0].isdigit() else None
+    answered = {main(q) for q in questions}
+    for i, q in enumerate(questions):
+        m = main(q)
+        if m is None or m in paper:
+            continue
+        before = next((main(x) for x in reversed(questions[:i]) if main(x) in paper), 0)
+        after = next((main(x) for x in questions[i + 1:] if main(x) in paper), max(paper) + 1)
+        fits = [n for n in sorted(paper) if before < n < after and n not in answered]
+        if len(fits) > 1:                        # 30, "71", 33: 31 and 32 fit, 31 is one digit off
+            fits = [n for n in fits if len(str(n)) == len(str(m))
+                    and sum(a != b for a, b in zip(str(n), str(m))) == 1]
+        q["flags"] = [f for f in q["flags"] if "comes after" not in f]
+        if len(fits) == 1:
+            q["flags"].append(f"read as Q{q['number']}, which is not in the paper: taken as Q{fits[0]} "
+                              f"from the order, check it")
+            q["number"] = str(fits[0])
+            answered.add(fits[0])
+        else:
+            q["flags"].append(f"Q{q['number']} is not in the paper: check the number")
+    # A number in the paper but in a one-question gap (25, "21", 27, with 26 nowhere): the half-covered
+    # 26 read as 21. Taken when the gap's number is one digit off what was read.
+    one_off = lambda a, b: len(a) == len(b) and sum(x != y for x, y in zip(a, b)) == 1
+    numbered = [i for i, q in enumerate(questions) if main(q) is not None]
+    for k in range(1, len(numbered) - 1):
+        q = questions[numbered[k]]
+        m, p, x = main(q), main(questions[numbered[k - 1]]), main(questions[numbered[k + 1]])
+        if "." in q["number"] or x != p + 2 or p < m < x:
+            continue
+        gap = p + 1
+        if gap in answered or gap not in paper or not one_off(str(m), str(gap)):
+            continue
+        q["flags"] = [f for f in q["flags"] if "comes after" not in f and "already answered" not in f]
+        q["flags"].append(f"read as Q{q['number']}, between Q{p} and Q{x}: taken as Q{gap} from the order, "
+                          f"check it")
+        page = q["crops"][0]["page"] if q.get("crops") else None
+        for other in questions:
+            other["flags"] = [f for f in other["flags"]
+                              if f != f"Q{q['number']} was already answered on page {page}"]
+        q["number"] = str(gap)
+        answered.add(gap)
 
 
 def build_result(crops: list[Crop], pages: int, skipped: list[int]) -> dict:

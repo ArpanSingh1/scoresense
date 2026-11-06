@@ -99,6 +99,18 @@ def check_option(text: str, options: tuple[str, ...]) -> tuple[str, Optional[str
     return text, labels[0], []
 
 
+def ask(image_path: str, prompt: str) -> str:
+    """The reading model's plain answer to a question about one image."""
+    with open(image_path, "rb") as f:
+        image_b64 = base64.b64encode(f.read()).decode("ascii")
+    body = {"model": MODEL, "stream": False, "options": READER_OPTIONS,
+            "messages": [{"role": "user", "content": prompt, "images": [image_b64]}]}
+    req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(body).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        return json.load(resp)["message"]["content"]
+
+
 def read_answer(image_path: str, question_id: str,
                 options: Optional[tuple[str, ...]] = None) -> Answer:
     with open(image_path, "rb") as f:

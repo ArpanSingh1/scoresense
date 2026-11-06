@@ -20,7 +20,7 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 
-from model import LETTER_OPTIONS, REVIEW_THRESHOLD, ROMAN_OPTIONS, check_option, read_answer
+from model import LETTER_OPTIONS, REVIEW_THRESHOLD, ROMAN_OPTIONS, ask, check_option, read_answer
 
 # An option label, as written by students: (C), C), (c), (ii), ii).
 OPTION_START = re.compile(r"\(?\s*(?:[A-Da-d]|i{1,3}|iv)\s*\)")
@@ -129,6 +129,22 @@ def read_label(image: Path) -> dict:
     elif "low confidence" in ans["review_reasons"]:
         reasons.append("low confidence")
     return {"read": text, "option": option if not why and not reasons else None, "reasons": reasons + why}
+
+
+# Hindi 7.3, "(iii) (A) (C) (D)" with A and C crossed out: read as A, then as C. Asked which letter is
+# not crossed out, the reader says D, and listing every letter it ends with D. Both must agree.
+KEPT_PROMPT = ("The student wrote option letters in brackets and crossed out the ones they changed their mind "
+               "about. Which one bracketed letter is NOT crossed out? Answer with just the letter.")
+ALL_PROMPT = ("Write every letter that is inside brackets in this handwriting, from left to right, including "
+              "letters that are crossed out. Example: (A) (C) (D)")
+
+
+def kept_option(image: Path) -> Optional[str]:
+    """The option left standing after the others were crossed out: the letter the reader says is not
+    crossed out, when it is also the last one written. None when they disagree."""
+    kept = re.fullmatch(r"\W*([A-D])\W*", ask(str(image), KEPT_PROMPT).strip().upper())
+    written = re.findall(r"\(\s*([A-D])\s*\)", ask(str(image), ALL_PROMPT).upper())
+    return kept.group(1) if kept and written and written[-1] == kept.group(1) else None
 
 
 def read_question(crops_dir: Path, crops: list[dict]) -> dict:

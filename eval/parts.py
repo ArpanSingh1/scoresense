@@ -26,6 +26,7 @@ LETTER_FORMS = {"ड़": "ङ", "ड़": "ङ", "ड": "ङ", "इ": "ङ", "�
 LABEL = re.compile(r"\(?\s*(x|ix|viii|vii|vi|iv|v|iii|ii|i|क|ख|ग|घ|ङ|ड़|ड़|ड|इ|ध|वा|ब)\s*\.?\s*\)\s*")
 # What comes before the labels on a line: the question number "1.", "9.", "2→", "8 ->".
 LINE_START = re.compile(r"^\s*(?:Q\.?\s*)?(?:\d{1,2}\s*[.):→>-]*\s*)?")
+LEAD_NUMBER = re.compile(r"^\s*(?:Q\.?\s*|Ans\.?\s*)?(\d{1,2})\s*[.)]")   # "28. Three ...", "Q37) (b)"
 
 
 def OWN_START(number: str) -> re.Pattern:
@@ -95,18 +96,26 @@ def recheck_mcq(part: dict, crops_dir: Path) -> None:
     """A part read as a wrong option is read again from its own crop, the way whole MCQs are: the
     transcript keeps crossed-out options ("(A) (C) (D)" read as "(A)"), the crop check sees them."""
     m = part.get("mcq")
-    if not m or m["verdict"] != "wrong" or crops_dir is None:
+    if not m or m["verdict"] == "right" or crops_dir is None or m["reasons"] == ["nothing written"]:
         return
     c = part_crop(part["crops"], int(part["number"].split(".")[1]))
     if not c:
         return
-    from mcq import read_question
-    again = read_question(crops_dir, [c])
-    if again["option"] == m["key"]:
-        m.update(option=again["option"], read=again["read"], reasons=[], verdict="right")
-    elif again["option"] != m["option"]:
+    from mcq import kept_option, read_question
+    if m["verdict"] == "wrong":
+        again = read_question(crops_dir, [c])
+        if again["option"] == m["key"]:
+            m.update(option=again["option"], read=again["read"], reasons=[], verdict="right")
+            return
+        if again["option"] == m["option"]:
+            return
         m.update(option=None, read=again["read"], verdict="review",
                  reasons=again["reasons"] or [f"read as {m['option']} and as {again['option'] or 'unclear'}"])
+    # Readings disagree, or several options are written: some were crossed out. The one left standing.
+    kept = kept_option(crops_dir / c["file"])
+    if kept:
+        m.update(option=kept, reasons=[f"options crossed out; {kept} is the one left"],
+                 verdict="right" if kept == m["key"] else "wrong")
 
 
 def split(result: dict, crops_dir: Path, scheme: dict[str, float], key: dict[str, str],
@@ -149,6 +158,22 @@ def split(result: dict, crops_dir: Path, scheme: dict[str, float], key: dict[str
                 if text:
                     texts.append(text)
             transcript = NL.join(texts)
+        # A number already answered whose own text starts with another, unanswered one ("34" in the margin,
+        # "37. (b)" in the answer, after Q34's parts): the margin was misread; the text's number is taken.
+        lead = LEAD_NUMBER.match(transcript)
+        mains = {n.split(".")[0] for n in scheme}
+        if (lead and lead.group(1) != q["number"] and lead.group(1) in mains and lead.group(1) not in numbers
+                and any(x is not q and q["number"] in (x["number"].split(".")[0], x.get("part_of"))
+                        for x in result["questions"] + out)):
+            q["flags"] = [f for f in q.get("flags", []) if "comes after" not in f and "already answered" not in f]
+            q["flags"].append(f"read as Q{q['number']} in the margin, but the answer starts \"{lead.group(0).strip()}\": "
+                              f"taken as Q{lead.group(1)}, check it")
+            q["number"] = lead.group(1)
+            numbers.add(q["number"])
+            if q["number"] not in with_parts:
+                q["transcript"] = transcript
+                out.append(q)
+                continue
         # The last part of the question before can sit in this one's first crop ("(ङ) कर्मवाच्य" above
         # "5. (क) ..."): what comes before this question's own number goes back to that question.
         lines = transcript.splitlines()

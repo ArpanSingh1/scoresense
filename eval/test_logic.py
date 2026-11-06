@@ -7,10 +7,10 @@ sheets (SST and maths booklets, 2026-11-03).
 import unittest
 
 from app import capped_total, needs_look, out_of, parse_scheme, scheme_total
-from booklet import Crop, assign, merge_pairs, parse, same_number
-from grade import suggest
+from booklet import Crop, assign, fit_to_paper, merge_pairs, parse, same_number
+from grade import close_match, other_points, split_by_text, suggest
 from mcq import label_confidence, only_number, strip_number
-from parts import mcq_from_text, split_text
+from parts import mcq_from_text, split, split_text
 from points import evidence_found
 from qpaper import check, scheme_text
 from segment import Block
@@ -106,6 +106,34 @@ class Grouping(unittest.TestCase):
         self.assertIn("comes after Q25", qs[-1].flags[0])
         self.assertEqual(assign([crop("13"), crop("14"), crop("15")])[-1].flags, [])
 
+    def test_number_not_in_paper_is_fitted(self):         # SST booklet: Q31 read as 71
+        qs = [{"number": n, "flags": []} for n in ("30", "71", "33", "34.1")]
+        fit_to_paper(qs, set(range(1, 38)))
+        self.assertEqual([q["number"] for q in qs], ["30", "31", "33", "34.1"])
+        self.assertIn("taken as Q31", qs[1]["flags"][0])
+        qs = [{"number": n, "flags": ["Q88 comes after Q30: check"]} for n in ("30", "88", "33")]
+        fit_to_paper(qs, set(range(1, 38)))
+        self.assertEqual(qs[1]["number"], "88")
+        self.assertEqual(qs[1]["flags"], ["Q88 is not in the paper: check the number"])
+
+    def test_number_in_a_one_question_gap_is_fitted(self):   # SST booklet: 25, "21" (26), 27 ... 21 again
+        qs = [{"number": n, "flags": [], "crops": [{"page": p}]} for n, p in
+              (("25", 4), ("21", 6), ("27", 7), ("29", 9), ("36.3", 20), ("21", 21), ("22", 21))]
+        qs[5]["flags"] = ["Q21 was already answered on page 6"]
+        fit_to_paper(qs, set(range(1, 38)))
+        self.assertEqual([q["number"] for q in qs], ["25", "26", "27", "29", "36.3", "21", "22"])
+        self.assertIn("taken as Q26", qs[1]["flags"][0])
+        self.assertEqual(qs[5]["flags"], [])
+        qs = [{"number": n, "flags": []} for n in ("25", "13", "27")]      # 13 is not one digit off 26
+        fit_to_paper(qs, set(range(1, 38)))
+        self.assertEqual(qs[1]["number"], "13")
+
+    def test_skipped_section_flags_the_jump_only(self):  # SST booklet: 18, 25-36, then 21-23 at the end
+        qs = assign([crop("17"), crop("18"), crop("25"), crop("26"), crop("27"), crop("29"), crop("36"),
+                     crop("21"), crop("22")])
+        self.assertEqual([q.number for q in qs], ["17", "18", "25", "26", "27", "29", "36", "21", "22"])
+        self.assertEqual([bool(q.flags) for q in qs], [False, False, True, False, False, False, True, True, False])
+
     def test_q_read_as_a_digit(self):                  # "Q.25)" read as 8.25, "Q.1)" as 8.1
         self.assertEqual(numbers([crop("8.24"), crop("9.25"), crop("0.26")]), ["24", "25", "26"])
         self.assertEqual(numbers([crop("", None, "continuation"), crop("8.1"), crop("8.2"), crop("9.3")]),
@@ -136,6 +164,47 @@ class Grouping(unittest.TestCase):
         qs = assign([crop("22"), crop("-")])
         self.assertEqual(numbers([crop("22"), crop("-")]), ["22"])
         self.assertEqual(qs[0].crops[1].kind, "note")
+
+
+class TextNumbers(unittest.TestCase):
+    def test_next_question_inside_an_answer_is_split_off(self):   # SST: 28 written on under 27
+        qs = [{"number": "27", "flags": [], "crops": ["a", "b", "c"]}]
+        texts = ["27. Challenges are\n1. Lack of internal democracy", "3. Money and muscle power\n28. Three features are",
+                 "2. Jurisdictions are in the Constitution"]
+        split_by_text(qs, qs[0], texts, {"27": {}, "28": {}})
+        self.assertEqual([q["number"] for q in qs], ["27", "28"])
+        self.assertEqual(qs[0]["crops"], ["a", "b"])
+        self.assertEqual(qs[1]["crops"], ["b", "c"])
+        self.assertTrue(qs[1]["transcript"].startswith("28. Three"))
+        self.assertTrue(qs[0]["transcript"].endswith("muscle power"))
+
+    def test_points_numbered_like_the_next_question_stay(self):
+        qs = [{"number": "2", "flags": [], "crops": ["a"]}]
+        split_by_text(qs, qs[0], ["1. one\n3. three"], {"2": {}, "3": {}})          # small numbers: points
+        self.assertEqual(len(qs), 1)
+        qs = [{"number": "27", "flags": [], "crops": ["a"]}, {"number": "28", "flags": [], "crops": ["b"]}]
+        split_by_text(qs, qs[0], ["27. x\n28. y"], {"27": {}, "28": {}})            # 28 is answered already
+        self.assertEqual(len(qs), 2)
+
+    def test_repeated_number_takes_the_number_its_answer_starts_with(self):   # "34" in the margin, "37. (b)"
+        result = {"questions": [{"number": "34.1", "flags": [], "crops": []},
+                                {"number": "34", "flags": ["Q34 comes after Q24: check"], "crops": ["c"],
+                                 "transcript": "37. (b)"}]}
+        split(result, None, {"34.1": 1, "34.2": 1, "37": 5}, {}, progress=lambda m: None)
+        self.assertEqual([q["number"] for q in result["questions"]], ["34.1", "37"])
+        self.assertIn("taken as Q37", result["questions"][1]["flags"][0])
+
+    def test_other_relevant_points_need_their_own_quote(self):
+        answer = "Agenda 21 was adopted by all. Leaders signed the Declaration on Climate Change."
+        found = [{"point": "Agenda 21", "quote": "Agenda 21 was adopted"},
+                 {"point": "made up", "quote": "Paris agreement was signed"},
+                 {"point": "Agenda again", "quote": "Agenda 21 was adopted by all"},
+                 {"point": "Climate", "quote": "signed the Declaration on Climate Change"}]
+        got = other_points(found, answer, [], 2)
+        self.assertEqual([g["quote"] for g in got], ["Agenda 21 was adopted", "signed the Declaration on Climate Change"])
+        self.assertTrue(all(g["other"] and g["made"] for g in got))
+        self.assertEqual(other_points(found, answer, ["Agenda 21 was adopted by all."], 1)[0]["point"],
+                         "Other relevant point: Climate")
 
 
 class MergeLines(unittest.TestCase):
@@ -201,7 +270,8 @@ OR
         self.assertEqual(r["key"], {"19": "A", "20": "C"})   # the numbered instructions are not questions
         self.assertEqual(r["points"]["21"], {"points": [
             "The silk routes are a good example of vibrant pre-modern trade and cultural links.",
-            "It connected Europe and Africa in the west and China in the east."], "needed": 2})
+            "It connected Europe and Africa in the west and China in the east."], "needed": 2, "other": True,
+            "question": "Why was the Indian subcontinent central to the flow of the trading network? Explain."})
         self.assertEqual(len(r["points"]["22"]["points"]), 2)   # both alternatives of the OR
         self.assertEqual(r["points"]["23.1"]["points"], ["English"])
         self.assertEqual(marks_scheme({**r["marks"], "23.1": 1}), "19-20:1, 21-22:2, 23.1:1")
@@ -296,6 +366,29 @@ class HindiParts(unittest.TestCase):
         self.assertTrue(evidence_found("सरल वाक्य", "सरल वाक्य"))
         self.assertTrue(evidence_found("कर्तृवाच्य", "कर्तृवाच्य"))        # a one-word answer
         self.assertFalse(evidence_found("the", "the answer is long enough here"))
+
+
+class ShortAnswers(unittest.TestCase):                  # Hindi booklet: right answers with misread letters
+    def test_misread_right_answers_match(self):
+        for point, said in [
+                ("कर्मवाच्य: कैप्टन द्वारा नेताजी की मूर्ति पर असली चश्मा लगाया जाता था",
+                 "कैप्टन द्वारा नेलाजी की मूर्ति पर असली चर्म लगाया जाता था,"),
+                ("भाववाच्य: उससे चलकर आया गया था", "उससे चलकर आया गाया,"),
+                ("कर्तृवाच्य", "कर्तव्य"), ("कर्मवाच्य", "कर्मवाद्य"),
+                ("भेद: संज्ञा आश्रित उपवाक्य", "कि वे भी आभकथा लिखें। संजा आश्रित उपवाक्य")]:
+            self.assertTrue(close_match(point, said), said)
+
+    def test_wrong_answers_do_not(self):
+        for point, said in [
+                ("कर्तृवाच्य", "कर्मवाच्य"), ("कर्मवाच्य", "भाववाच्य"), ("उपमा अलंकार", "रूपक अलंकार"),
+                ("भेद: संज्ञा आश्रित उपवाक्य", "कि वे भी आत्मकथा लिखें। विशेषण आश्रित उपवाक्य"),
+                ("भाववाच्य: उससे चलकर आया गया था", "वह चलकर आया था"),
+                ("कर्मवाच्य: कैप्टन द्वारा नेताजी की मूर्ति पर असली चश्मा लगाया जाता था",
+                 "कैप्टन नेताजी की मूर्ति पर असली चश्मा लगाता था"),
+                ("क्रियाविशेषण", "क्रिया"), ("Rio de Janeiro Earth Summit, 1992", "Paris summit 2015")]:
+            self.assertFalse(close_match(point, said), said)
+        self.assertFalse(close_match("विशेषण (गुणवाचक)", "क्रियाविशेषण"))  # another part of speech
+
 
 if __name__ == "__main__":
     unittest.main()
